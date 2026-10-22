@@ -1,0 +1,136 @@
+# Kasserine
+
+A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one GI holding the south mouth of a canyon while the Afrika Korps pushes down it. Built with libGDX for Android, with a desktop launcher for testing.
+
+## How a run works
+
+- A run is five days: Sidi Bou Zid, Sbeitla, Kasserine Pass twice, then Thala.
+- Each day is a 60-second clock. Survive until it hits zero.
+- Two ways to lose: you die, or **the line** breaks. Every German who slips past you out the bottom of the canyon knocks the line down (8 for infantry, 25 for a tank). A bugle call and a red flash on the bar tell you it happened.
+- After each day you pick one of three upgrades: Thompson (extra bullet), M1 Garand (damage), Quick Hands (fire rate), Field Dressing (health), Jump Boots (speed), Bazooka Team (triple damage to tanks), AP Rounds (pierce), Air Cover (repairs the line).
+- Tanks start showing up on day 3. Before a tank fires, it stops, its turret whines, and a red line shows where the shell will go and where it'll explode. Roll out of the line. The blast also kills German infantry standing in it.
+- Hold all five days and Rommel calls off the attack.
+
+## Controls
+
+Every control works on both desktop and Android: plug a keyboard or a Bluetooth controller into the phone and it just works. Whatever you used last decides what the screen shows. The touch sticks and ROLL button disappear when you pick up a controller, and the prompts change from "Tap" to "Press A" or "Press Enter".
+
+| | Move | Aim | Fire | Roll | Pause |
+| --- | --- | --- | --- | --- | --- |
+| **Touch** | Left thumb, anywhere on the left half | Right thumb, anywhere on the right half | Fires while your right thumb is down | ROLL button | Back |
+| **Keyboard + mouse** | WASD or arrow keys | Mouse | Left click or Space | Right-click or Shift | Esc or P |
+| **Keyboard only** | Arrow keys or WASD | Automatic: the nearest German, or the way you're moving | Space, Z or J | Shift, X or K | Esc or P |
+| **Controller** | Left stick or D-pad | Right stick | Push the right stick, or hold R1/R2 | A or L1 | Start |
+
+Keyboard-only aiming kicks in when the mouse hasn't moved for 2.5 seconds. Arrows + Z to fire + X to roll is the classic arcade layout.
+
+Menus work with any of them:
+- **Upgrade cards:** tap or click a card, or use left/right (arrows, A/D, stick or D-pad) and Enter, Space, Z or A to pick. Number keys 1, 2, 3 pick directly.
+- **Paused or game over:** tap, click, Enter, Space or A.
+- Menu presses are ignored for 0.6 seconds after a screen appears, so holding fire when a day ends doesn't skip the upgrade screen.
+
+The roll lasts 0.28 seconds. Bullets and shells can't hit you during it, and it recharges in 0.9 seconds. You roll the way you're moving, or the way you're aiming if you're standing still. You can't shoot mid-roll.
+
+## Code
+
+```
+core/     all game code
+android/  Android launcher and manifest (landscape, immersive)
+lwjgl3/   desktop launcher
+assets/   sfx/*.wav
+tools/    make_sfx.py, which generates the sound effects
+```
+
+| File | What it does |
+| --- | --- |
+| `Battle.java` | All the rules as plain Java: the canyon, rocks, player, roll, enemies, tank aiming, bullets, blasts, the clock, the line, upgrades. Draws nothing and plays nothing, so you can simulate runs headless. |
+| `Kasserine.java` | Builds the greybox 3D models, follows the player with the camera, draws units, warning lines and the HUD, handles menus and taps. Turns battle events into effects, sounds, screen shake and freeze frames. |
+| `Fx.java` | Visual-only effects: muzzle flashes, dust, blood, sparks, smoke, explosions, scorch marks, soldiers falling over, burning tank wrecks. Cleared at the start of each day. |
+| `Sfx.java` | Loads and plays the sounds, with random pitch, distance falloff and left/right panning. |
+| `Controls.java` | Merges touch, keyboard, mouse and controller into one move/aim/fire/roll value per frame, plus menu presses. Tracks which you used last. |
+| `Sticks.java` | The two touch joysticks and the ROLL button. |
+
+### How effects get from the rules to the screen
+
+`Battle` never calls graphics or sound code. When something happens it adds an `Event` to `battle.events` (`SHOT`, `KILL`, `TANK_AIM`, `BLAST`, `PLAYER_HIT` and so on), with a position and a direction. After each update, `Kasserine.handleEvents()` goes through the list and decides what that looks and sounds like. To add a new effect, emit an event in `Battle` and handle it in `handleEvents()`.
+
+Game-feel settings live in `handleEvents()`:
+- `freeze`: the world stops for a moment on a hit. 0.025s for a kill, 0.04s when you're hit, 0.12s for a tank kill.
+- `shake`: 0 to 1 screen shake, scaled by how close a blast was.
+- `kickX/kickZ`: a small camera recoil on each of your shots.
+
+### Sound
+
+The sounds are synthesized from noise and sine waves by `tools/make_sfx.py`, so there are no licensing questions. They're placeholders. To change one, edit the script and run `python3 tools/make_sfx.py` from the project root (needs numpy), or drop in your own `.wav` with the same name.
+
+### Coordinates
+
+`x` runs across the canyon, `z` runs up it. The Germans come from high `z`. With this camera, screen right is world `-x`, which is why `Controls` and the sound panning flip `x`.
+
+Controllers come from the gdx-controllers library (2.2.4), which is the one extra dependency.
+
+## Running it
+
+Requires JDK 17+. Open the folder in Android Studio and let Gradle sync. It builds against API 36.
+
+Desktop:
+
+```
+./gradlew lwjgl3:run
+```
+
+S23 over USB (USB debugging on):
+
+```
+./gradlew android:installDebug
+```
+
+## Tuning
+
+Most of the feel lives in a few numbers in `Battle.java`:
+
+- `DODGE_TIME`, `DODGE_SPEED`, `DODGE_COOLDOWN` at the top.
+- `TANK_RANGE`, `TANK_WINDUP` (how long the warning shows), `SHELL_SPEED`, `BLAST_RADIUS` at the top. Tank reload is in `updateTankGun()`.
+- `DAY_LENGTH` and the `spawnTimer` formula in `spawnEnemies()` control how busy each day gets.
+- Enemy health and speed are set in `spawnEnemies()`. Rifle range, fire rate and damage are in `updateRifle()`.
+- Player starting stats are in `reset()`.
+
+In a headless simulation of 300 runs with a bot that aims badly, a bot that never rolls dies on day 2 about a quarter of the time. A bot that rolls out of tank lines always gets past day 2. Both usually die on day 3 or 4, so a real player who dodges well should be able to win. Tune from actual play on the phone.
+
+## Roadmap
+
+Build in this order. Each step should make the game more fun to play before the next one starts. Content added to a game that doesn't feel good to play doesn't help.
+
+### 1. Combat feel (done in this version)
+- [x] Dodge roll you can't be hit during
+- [x] Muzzle flashes, hit sparks, dust, blood, knockback and stagger
+- [x] Soldiers fall over, tanks become burning wrecks, shells leave scorch marks
+- [x] Freeze frames, screen shake, camera recoil
+- [x] Tanks show a warning line before firing
+- [x] Placeholder sound for everything
+- [ ] Play it on the S23 and write down what feels wrong
+
+### 2. Enemies that make you play differently
+Each new enemy should make you do something different, not just take more hits.
+- **MG42 team:** sets up and sweeps an arc. Flank it or break line of sight behind rocks.
+- **Grenadiers:** throw at where you're standing, which punishes standing still.
+- **Officer:** buffs nearby troops, so you have to pick him out of the crowd.
+- **Panzer III upgrade:** armored from the front, weak from the sides and back.
+- **Stuka strike:** a shadow crosses the canyon, then bombs land along its path.
+- **Boss per act**, such as a Tiger tank at the end. Tigers fought in Tunisia that winter.
+- Move enemy types into their own classes or a JSON file at this point so `Battle.java` stays readable.
+
+### 3. Build variety
+- Weapons as loot (M1 Garand, Thompson, BAR), each with its own handling.
+- One active ability slot: grenade, smoke, or calling in a mortar strike.
+- Upgrades that combine with each other instead of flat +X% bonuses.
+
+### 4. Run structure and meta progression
+- A branching map between fights: battle, supply drop, aid station, event card.
+- Switch to libGDX `Screen`s for the menu, map and battle.
+- "Lessons learned" points from failed runs that unlock permanent upgrades, like better radios, air support or veteran squads. After Kasserine, Patton replaced Fredendall and the Army changed how it fought, and this mirrors that.
+
+### 5. Art and polish
+- Low-poly glTF models from Blender via gdx-gltf, plus shadows and animation. Replace the greybox one piece at a time.
+- Real recorded sound.
+- A save system, settings, a main menu, and the Play Store listing.

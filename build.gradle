@@ -1,0 +1,19 @@
+plugins {
+    id 'com.android.application' version '8.13.0' apply false
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+configure(subprojects - project(':android')) {
+    apply plugin: 'java-library'
+    java {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+}

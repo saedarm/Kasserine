@@ -1,0 +1,18 @@
+apply plugin: 'application'
+
+dependencies {
+    implementation project(':core')
+    implementation "com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion"
+    implementation "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
+    implementation "com.badlogicgames.gdx-controllers:gdx-controllers-desktop:$gdxControllersVersion"
+}
+
+application {
+    mainClass = 'com.saedarm.kasserine.lwjgl3.Lwjgl3Launcher'
+}
+
+tasks.named('run') {
+    workingDir = rootProject.file('assets')
+    // macOS needs this for LWJGL3
+    if (System.getProperty('os.name').toLowerCase().contains('mac')) jvmArgs '-XstartOnFirstThread'
+}
