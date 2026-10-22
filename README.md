@@ -39,6 +39,7 @@ android/  Android launcher and manifest (landscape, immersive)
 lwjgl3/   desktop launcher
 assets/   sfx/*.wav
 tools/    make_sfx.py, which generates the sound effects
+Play Kasserine.bat   double-click to build and play on Windows
 ```
 
 | File | What it does |
@@ -69,21 +70,52 @@ The sounds are synthesized from noise and sine waves by `tools/make_sfx.py`, so 
 
 Controllers come from the gdx-controllers library (2.2.4), which is the one extra dependency.
 
-## Running it
+## Running on desktop
 
-Requires JDK 17+. Open the folder in Android Studio and let Gradle sync. It builds against API 36.
+You need Java 17 or newer. Android Studio ships one, so if Android Studio is installed you already have it.
 
-Desktop:
+**Easiest: double-click `Play Kasserine.bat`.** The first time, it builds the game (a minute or two), then it starts. After that it starts straight away. It finds Java on its own: `JAVA_HOME` if you've set it, otherwise Android Studio's bundled copy, otherwise whatever `java` is on your PATH. If you change the code, delete `lwjgl3\build\libs\Kasserine-desktop.jar` and it rebuilds next time.
 
-```
-./gradlew lwjgl3:run
-```
-
-S23 over USB (USB debugging on):
+**From a terminal**, in the project folder:
 
 ```
-./gradlew android:installDebug
+gradlew lwjgl3:run
 ```
+
+That runs straight from the source, so it always has your latest changes. Use `./gradlew` instead of `gradlew` in Git Bash, or on Mac and Linux.
+
+**A single file to share:**
+
+```
+gradlew lwjgl3:dist
+java -jar lwjgl3/build/libs/Kasserine-desktop.jar
+```
+
+The jar has everything inside it, sounds included, and runs on Windows, Mac or Linux, anywhere Java 17+ is installed.
+
+**From Android Studio:** open the Gradle panel on the right, then go to Kasserine → lwjgl3 → Tasks → application → double-click **run**. After that it shows up in the run menu at the top, so you can start it with the green play button.
+
+### If it doesn't start
+
+- **"java is not recognized"** or **"JAVA_HOME is not set"** (from the terminal commands; the .bat file handles this itself): Java isn't on your PATH. Point `JAVA_HOME` at Android Studio's copy. In a Command Prompt:
+  ```
+  setx JAVA_HOME "C:\Program Files\Android\Android Studio\jbr"
+  ```
+  Then close the terminal and open a new one. Running from inside Android Studio avoids this, because it uses its own Java.
+- **"Unsupported class file major version"** or a Java version error: you have an old Java, 8 or 11. Use Android Studio's copy as above.
+- **The window opens but there's no sound:** the game keeps going without audio if it can't find a sound device. Check your Windows output device.
+
+## Running on Android
+
+Open the folder in Android Studio and let Gradle sync. It builds against API 36.
+
+S23 over USB, with USB debugging on:
+
+```
+gradlew android:installDebug
+```
+
+Or press Run in Android Studio with the phone selected. Without a cable, copy the APK from Releases to the phone and tap it in My Files.
 
 ## Tuning
 

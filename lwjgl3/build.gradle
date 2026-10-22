@@ -16,3 +16,19 @@ tasks.named('run') {
     // macOS needs this for LWJGL3
     if (System.getProperty('os.name').toLowerCase().contains('mac')) jvmArgs '-XstartOnFirstThread'
 }
+
+// One runnable jar with everything inside: code, libGDX, natives and assets.
+//   ./gradlew lwjgl3:dist   ->   lwjgl3/build/libs/Kasserine-desktop.jar
+//   java -jar lwjgl3/build/libs/Kasserine-desktop.jar
+tasks.register('dist', Jar) {
+    group = 'distribution'
+    description = 'Builds a single runnable jar for desktop.'
+    archiveFileName = 'Kasserine-desktop.jar'
+    manifest { attributes 'Main-Class': application.mainClass.get() }
+    dependsOn configurations.runtimeClasspath, classes
+    from sourceSets.main.output
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    from rootProject.file('assets')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/INDEX.LIST'
+}
