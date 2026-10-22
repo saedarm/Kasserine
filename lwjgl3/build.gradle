@@ -7,6 +7,10 @@ dependencies {
     implementation "com.badlogicgames.gdx-controllers:gdx-controllers-desktop:$gdxControllersVersion"
 }
 
+// Put assets/ on the classpath, so sounds load however the game is started:
+// gradlew run, the jar, or the green arrow next to main() in Android Studio/IntelliJ.
+sourceSets.main.resources.srcDirs += rootProject.file('assets')
+
 application {
     mainClass = 'com.saedarm.kasserine.lwjgl3.Lwjgl3Launcher'
 }
@@ -28,7 +32,6 @@ tasks.register('dist', Jar) {
     dependsOn configurations.runtimeClasspath, classes
     from sourceSets.main.output
     from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
-    from rootProject.file('assets')
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/INDEX.LIST'
 }
