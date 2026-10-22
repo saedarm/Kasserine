@@ -36,6 +36,24 @@ public class Battle {
     public static final float SHELL_SPEED = 16f;
     public static final float BLAST_RADIUS = 1.8f;
 
+    // MG42 teams: dig in, then sweep a fixed arc with bursts
+    public static final float MG_ARC = 0.95f;         // half-width of the field of fire, radians (about 55 degrees)
+    public static final float MG_RANGE = 17f;
+    public static final float MG_TURN = 0.75f;         // how fast the gun swings, radians per second
+    public static final float MG_SETUP = 1.4f;        // seconds to dig in before the first burst
+    public static final float MG_BURST = 1.8f;
+    public static final float MG_RELOAD = 1.8f;
+    public static final float MG_RATE = 12f;          // rounds per second in a burst
+
+    // Grenadiers: hang back and lob grenades where you're standing
+    public static final float GRENADE_WINDUP = 0.5f;  // arm back before the throw
+    public static final float GRENADE_FUSE = 0.75f;   // after it lands, before it goes off
+    public static final float GRENADE_RADIUS = 1.6f;
+
+    // Stuka strikes: a line of bombs down the canyon
+    public static final float STUKA_PASS = 3f;        // seconds for the plane to cross the screen
+    public static final float BOMB_RADIUS = 2.1f;
+
     // ---- upgrades: the lessons the Army learned the hard way ----------------
 
     public enum Upgrade {
@@ -57,17 +75,23 @@ public class Battle {
     public enum Ev {
         SHOT,          // you fired. x,z = muzzle, dx,dz = aim
         ENEMY_SHOT,    // a rifleman fired
+        MG_SHOT,       // an MG42 fired one round
+        MG_SETUP,      // an MG42 team started digging in
         TANK_AIM,      // a tank started its windup
         TANK_FIRE,     // a tank fired its shell
+        GRENADE_THROW, // a grenadier threw. x,z = from, dx,dz = where it will land
+        GRENADE_LAND,  // a grenade hit the ground and is about to go off
+        STUKA,         // a bombing run started. x,z = center, dx,dz = flight direction
         HIT,           // your bullet hit infantry. dx,dz = bullet direction
         ARMOR_HIT,     // your bullet hit a tank
         KILL,          // infantry died. dx,dz = which way they fall
         TANK_KILL,     // a tank died. dx,dz = its facing
         IMPACT,        // a bullet hit a rock
-        BLAST,         // a shell exploded
+        BLAST,         // something exploded. amount = radius
         PLAYER_HIT,    // you took damage. amount = damage
         DODGE,         // you started a roll. dx,dz = roll direction
         BREAKTHROUGH,  // someone got past you and hurt the line. amount = line lost
+        FIRST_SIGHTING // a new kind of threat showed up for the first time this run. amount = Threat ordinal
     }
 
     public static class Event {
@@ -86,6 +110,9 @@ public class Battle {
 
     // ---- entities -----------------------------------------------------------
 
+    /** Every kind of thing that can kill you. Used for spawning and first-time tips. */
+    public enum Threat { RIFLE, GRENADIER, MG, TANK, STUKA }
+
     /** Anything that stands in the canyon. */
     public static class Body { public float x, z; }
 
@@ -102,11 +129,18 @@ public class Battle {
     }
 
     public static class Enemy extends Body {
-        public boolean tank;
+        public Threat kind;
         public float hp, speed, radius, cooldown, hitTimer, stagger;
         public float faceX = 0, faceZ = -1;
-        /** Tanks only: counts down while the tank is about to fire along aimX/aimZ. */
+        /** Tanks: counts down while about to fire along aimX/aimZ. Grenadiers: arm back. MG: digging in. */
         public float windup, aimX, aimZ;
+        /** Grenadiers: where the grenade will land. */
+        public float targetX, targetZ;
+        /** MG42: where it digs in, whether it has, the middle of its arc, where the gun points, burst left. */
+        public float setupZ, arcCenter, gun, burst;
+        public boolean deployed;
+
+        public boolean isTank() { return kind == Threat.TANK; }
     }
 
     public static class Bullet {
@@ -114,6 +148,28 @@ public class Battle {
         public boolean enemy, shell;
         public int pierce;
         public Enemy lastHit;
+    }
+
+    /** A grenade in the air. t runs from 0 to flight. */
+    public static class Grenade {
+        public float x0, z0, x1, z1, t, flight;
+        public float x() { return MathUtils.lerp(x0, x1, t / flight); }
+        public float z() { return MathUtils.lerp(z0, z1, t / flight); }
+        /** Height above the ground, a simple arc. */
+        public float y() { float k = t / flight; return 1.1f + 3.2f * k * (1 - k) - 0.9f * k; }
+    }
+
+    /** Something on the ground about to explode: a landed grenade or a falling bomb. */
+    public static class Hazard {
+        public float x, z, fuse, maxFuse, radius, damage;
+        public boolean bomb;
+    }
+
+    /** A Stuka crossing the canyon. Only for drawing: the bombs are Hazards. */
+    public static class Strike {
+        public float cx, cz, dx, dz, t;
+        /** Where the plane is right now, along its path. */
+        public float planeOffset() { return -30f + 60f * t / STUKA_PASS; }
     }
 
     public static class Rock {
@@ -128,6 +184,9 @@ public class Battle {
     public final Soldier player = new Soldier();
     public final Array<Enemy> enemies = new Array<>();
     public final Array<Bullet> bullets = new Array<>();
+    public final Array<Grenade> grenades = new Array<>();
+    public final Array<Hazard> hazards = new Array<>();
+    public final Array<Strike> strikes = new Array<>();
     public final Array<Rock> rocks = new Array<>();
     public final Array<Upgrade> offer = new Array<>();
 
@@ -139,7 +198,8 @@ public class Battle {
     /** Goes up by one every time a day starts, so the renderer knows to clear old effects. */
     public int dayCounter;
 
-    private float spawnTimer;
+    private float spawnTimer, stukaTimer;
+    private final boolean[] seen = new boolean[Threat.values().length];
 
     public Battle() {
         buildRocks();
@@ -151,14 +211,19 @@ public class Battle {
         p.x = 0; p.z = 6; p.maxHp = 100; p.hp = 100; p.speed = 5f;
         p.fireRate = 5f; p.damage = 10f; p.pellets = 1; p.pierce = 0; p.bazooka = false;
         day = 0; line = 100; kills = 0;
+        java.util.Arrays.fill(seen, false);
         startDay();
     }
 
     private void startDay() {
         enemies.clear();
         bullets.clear();
+        grenades.clear();
+        hazards.clear();
+        strikes.clear();
         clock = DAY_LENGTH;
         spawnTimer = 1.5f;
+        stukaTimer = MathUtils.random(9f, 14f);
         Soldier p = player;
         p.z = 6; p.x = 0;
         p.dodgeTime = 0; p.dodgeCooldown = 0; p.hurtTimer = 0;
@@ -182,6 +247,12 @@ public class Battle {
         }
     }
 
+    private void sighted(Threat t, float x, float z) {
+        if (seen[t.ordinal()]) return;
+        seen[t.ordinal()] = true;
+        emit(Ev.FIRST_SIGHTING, x, z, 0, 0, t.ordinal());
+    }
+
     // ---- per-frame update ---------------------------------------------------
 
     /**
@@ -197,8 +268,11 @@ public class Battle {
 
         updatePlayer(dt, moveX, moveZ, aimX, aimZ, fire, dodge);
         spawnEnemies(dt);
+        updateStukas(dt);
         updateEnemies(dt);
         updateBullets(dt);
+        updateGrenades(dt);
+        updateHazards(dt);
 
         if (player.hp <= 0) state = State.DEAD;
         else if (line <= 0) state = State.LINE_BROKEN;
@@ -262,6 +336,26 @@ public class Battle {
         }
     }
 
+    // ---- spawning -----------------------------------------------------------
+
+    /**
+     * Which threats show up on which day. Each day adds one new thing:
+     * day 1 riflemen and a few grenadiers, day 2 MG42 teams,
+     * day 3 tanks and Stukas, days 4 and 5 more of everything.
+     */
+    private Threat rollThreat() {
+        int mgs = 0;
+        for (Enemy e : enemies) if (e.kind == Threat.MG) mgs++;
+        float r = MathUtils.random();
+        float tank = day >= 2 ? 0.05f + day * 0.025f : 0;
+        float mg = day >= 1 && mgs < (day >= 3 ? 2 : 1) ? 0.06f + day * 0.01f : 0;
+        float gren = 0.10f + day * 0.035f;
+        if (r < tank) return Threat.TANK;
+        if (r < tank + mg) return Threat.MG;
+        if (r < tank + mg + gren) return Threat.GRENADIER;
+        return Threat.RIFLE;
+    }
+
     private void spawnEnemies(float dt) {
         spawnTimer -= dt;
         if (spawnTimer > 0) return;
@@ -272,16 +366,67 @@ public class Battle {
         int count = 1 + MathUtils.random(day / 2 + 1);
         for (int i = 0; i < count; i++) {
             Enemy e = new Enemy();
-            e.tank = day >= 2 && MathUtils.randomBoolean(0.06f + day * 0.03f);
+            e.kind = rollThreat();
             // Just off the top of the screen, so the fight comes to you.
             e.z = Math.min(SPAWN_Z, player.z + 24f) + MathUtils.random(-1.5f, 1.5f);
             e.x = MathUtils.random(-1f, 1f) * (halfWidth(e.z) - 1.5f);
-            if (e.tank) { e.hp = 140; e.speed = 1.3f; e.radius = 1.2f; }
-            else { e.hp = 20 + day * 4; e.speed = MathUtils.random(2.0f, 2.8f); e.radius = 0.4f; }
+            e.radius = 0.4f;
             e.cooldown = MathUtils.random(1.5f, 3f);
+            switch (e.kind) {
+                case TANK: e.hp = 140; e.speed = 1.3f; e.radius = 1.2f; break;
+                case MG:
+                    e.hp = 50; e.speed = 2.6f; e.radius = 0.6f;
+                    // Comes in just above the top of the screen and digs in a few steps later.
+                    e.z = Math.min(SPAWN_Z, player.z + 18f);
+                    e.setupZ = Math.min(e.z - 3f, player.z + MathUtils.random(10f, 13f));
+                    e.windup = -4f; // negative = walking; digs in when this reaches 0 even if blocked
+                    break;
+                case GRENADIER: e.hp = 20 + day * 3; e.speed = 2.2f; e.cooldown = MathUtils.random(1.0f, 2.0f); break;
+                default: e.hp = 20 + day * 4; e.speed = MathUtils.random(2.0f, 2.8f);
+            }
             enemies.add(e);
+            sighted(e.kind, e.x, e.z);
         }
     }
+
+    /** From day 3, a Stuka every 13-19 seconds lays a line of bombs through where you're standing. */
+    private void updateStukas(float dt) {
+        for (int i = strikes.size - 1; i >= 0; i--) {
+            Strike s = strikes.get(i);
+            s.t += dt;
+            if (s.t > STUKA_PASS + 0.5f) strikes.removeIndex(i);
+        }
+        if (day < 2) return;
+        stukaTimer -= dt;
+        if (stukaTimer > 0) return;
+        stukaTimer = MathUtils.random(13f, 19f) - day;
+
+        Soldier p = player;
+        // Dives down the canyon toward you, give or take 30 degrees.
+        float a = MathUtils.random(-0.5f, 0.5f);
+        Strike s = new Strike();
+        s.cx = p.x; s.cz = p.z;
+        s.dx = MathUtils.sin(a); s.dz = -MathUtils.cos(a);
+        strikes.add(s);
+        emit(Ev.STUKA, s.cx, s.cz, s.dx, s.dz, 0);
+        sighted(Threat.STUKA, s.cx, s.cz);
+
+        // Five bombs, 3 units apart along the path, each going off half a second
+        // after the plane passes over it. The markers show from the start.
+        for (int b = -2; b <= 2; b++) {
+            float off = b * 3f;
+            Hazard h = new Hazard();
+            h.x = s.cx + s.dx * off;
+            h.z = s.cz + s.dz * off;
+            h.maxFuse = h.fuse = (off + 30f) / 60f * STUKA_PASS + 0.5f;
+            h.radius = BOMB_RADIUS;
+            h.damage = 22;
+            h.bomb = true;
+            hazards.add(h);
+        }
+    }
+
+    // ---- enemies ------------------------------------------------------------
 
     private void updateEnemies(float dt) {
         Soldier p = player;
@@ -298,10 +443,19 @@ public class Battle {
             if (dist < 14f) { tx = dx / dist; tz = dz / dist; }
             else { tx = -e.x * 0.05f; tz = -1f; }
 
-            // Infantry stop and shoot at mid range instead of hugging you.
-            // Tanks stop while they aim. Anyone just shot staggers for a moment.
             float moveScale = 1f;
-            if (!e.tank && dist < 6f) moveScale = 0f;
+            switch (e.kind) {
+                case RIFLE: if (dist < 6f) moveScale = 0f; break;        // stop and shoot at mid range
+                case GRENADIER:                                          // keep 9-11 units away
+                    if (dist < 8f) { tx = -tx; tz = -tz; moveScale = 0.6f; }
+                    else if (dist < 11f) moveScale = 0f;
+                    break;
+                case MG:                                                 // walk to the spot, then stay
+                    if (e.deployed) moveScale = 0f;
+                    else { tx = -e.x * 0.05f; tz = -1f; }
+                    break;
+                default:
+            }
             if (e.windup > 0 || e.stagger > 0) moveScale = 0f;
 
             // Don't stack on each other.
@@ -318,6 +472,7 @@ public class Battle {
                     sz += oz / d * (min - d);
                 }
             }
+            if (e.deployed) { sx = 0; sz = 0; } // a dug-in gun doesn't get shoved around
 
             e.x += (tx * e.speed * moveScale) * dt + sx * 4f * dt;
             e.z += (tz * e.speed * moveScale) * dt + sz * 4f * dt;
@@ -325,20 +480,26 @@ public class Battle {
             e.x = MathUtils.clamp(e.x, -hw, hw);
             pushOutOfRocks(e, e.radius);
 
-            if (e.windup > 0) { e.faceX = e.aimX; e.faceZ = e.aimZ; }
+            // Which way they face: tanks lock on while aiming, MGs face their gun, everyone else faces you.
+            if (e.kind == Threat.MG && e.deployed) { e.faceX = MathUtils.cos(e.gun); e.faceZ = MathUtils.sin(e.gun); }
+            else if (e.kind == Threat.TANK && e.windup > 0) { e.faceX = e.aimX; e.faceZ = e.aimZ; }
             else { e.faceX = dx / dist; e.faceZ = dz / dist; }
 
             // Slipped past you out the south end.
             if (e.z < 0.5f) {
-                float lost = e.tank ? 25 : 8;
+                float lost = e.isTank() ? 25 : 8;
                 line -= lost;
                 emit(Ev.BREAKTHROUGH, e.x, e.z, 0, -1, lost);
                 enemies.removeIndex(i);
                 continue;
             }
 
-            if (e.tank) updateTankGun(e, dt, dist, dx, dz);
-            else updateRifle(e, dt, dist, dx, dz);
+            switch (e.kind) {
+                case TANK: updateTankGun(e, dt, dist, dx, dz); break;
+                case MG: updateMg(e, dt, dist, dx, dz); break;
+                case GRENADIER: updateGrenadier(e, dt, dist); break;
+                default: updateRifle(e, dt, dist, dx, dz);
+            }
         }
     }
 
@@ -347,15 +508,87 @@ public class Battle {
         if (dist > 11f || e.cooldown > 0 || e.stagger > 0) return;
         e.cooldown = MathUtils.random(2.4f, 3.6f);
         float a = MathUtils.atan2(dz, dx) + MathUtils.random(-0.08f, 0.08f);
+        enemyBullet(e.x, e.z, a, 9f, 11f, 5);
+        emit(Ev.ENEMY_SHOT, e.x + MathUtils.cos(a) * 0.6f, e.z + MathUtils.sin(a) * 0.6f, MathUtils.cos(a), MathUtils.sin(a), 0);
+    }
+
+    private void enemyBullet(float x, float z, float angle, float speed, float range, float damage) {
         Bullet b = new Bullet();
         b.enemy = true;
-        b.x = e.x; b.z = e.z;
-        b.vx = MathUtils.cos(a) * 9f;
-        b.vz = MathUtils.sin(a) * 9f;
-        b.life = 11f / 9f + 0.3f;
-        b.damage = 5;
+        b.x = x; b.z = z;
+        b.vx = MathUtils.cos(angle) * speed;
+        b.vz = MathUtils.sin(angle) * speed;
+        b.life = range / speed + 0.3f;
+        b.damage = damage;
         bullets.add(b);
-        emit(Ev.ENEMY_SHOT, e.x + MathUtils.cos(a) * 0.6f, e.z + MathUtils.sin(a) * 0.6f, MathUtils.cos(a), MathUtils.sin(a), 0);
+    }
+
+    /**
+     * MG42: walks to its spot and digs in facing you. From then on the gun can
+     * only swing MG_ARC either side of that direction, and it swings slowly.
+     * Get outside the arc and it can't touch you. Rocks stop its bullets.
+     */
+    private void updateMg(Enemy e, float dt, float dist, float dx, float dz) {
+        if (!e.deployed) {
+            e.windup += dt;
+            if (e.z <= e.setupZ || dist < 11f || e.windup >= 0) {
+                e.deployed = true;
+                e.windup = MG_SETUP;
+                e.arcCenter = e.gun = MathUtils.atan2(dz, dx);
+                e.cooldown = 0;
+                emit(Ev.MG_SETUP, e.x, e.z, dx / dist, dz / dist, 0);
+            }
+            return;
+        }
+        if (e.windup > 0) { e.windup -= dt; return; }
+
+        // Turn toward you, but never outside the arc.
+        float want = MathUtils.atan2(dz, dx);
+        float rel = angleDiff(want, e.arcCenter);
+        boolean inArc = Math.abs(rel) <= MG_ARC && dist < MG_RANGE;
+        float target = e.arcCenter + MathUtils.clamp(rel, -MG_ARC, MG_ARC);
+        float turn = MathUtils.clamp(angleDiff(target, e.gun), -MG_TURN * dt, MG_TURN * dt);
+        e.gun += turn;
+
+        if (e.burst > 0) {
+            e.burst -= dt;
+            e.cooldown -= dt;
+            if (e.cooldown <= 0) {
+                e.cooldown += 1f / MG_RATE;
+                float a = e.gun + MathUtils.random(-0.07f, 0.07f);
+                enemyBullet(e.x + MathUtils.cos(a) * 0.9f, e.z + MathUtils.sin(a) * 0.9f, a, 15f, MG_RANGE, 2);
+                emit(Ev.MG_SHOT, e.x + MathUtils.cos(a) * 1.1f, e.z + MathUtils.sin(a) * 1.1f, MathUtils.cos(a), MathUtils.sin(a), 0);
+            }
+            if (e.burst <= 0) e.cooldown = MG_RELOAD;
+        } else {
+            e.cooldown -= dt;
+            if (e.cooldown <= 0 && inArc) { e.burst = MG_BURST; e.cooldown = 0; }
+        }
+    }
+
+    /** Grenadier: arms back for half a second, then lobs a grenade at where you were standing. */
+    private void updateGrenadier(Enemy e, float dt, float dist) {
+        Soldier p = player;
+        if (e.windup > 0) {
+            e.windup -= dt;
+            if (e.windup <= 0) {
+                Grenade g = new Grenade();
+                g.x0 = e.x; g.z0 = e.z;
+                g.x1 = e.targetX; g.z1 = e.targetZ;
+                float d = (float) Math.sqrt((g.x1 - g.x0) * (g.x1 - g.x0) + (g.z1 - g.z0) * (g.z1 - g.z0));
+                g.flight = MathUtils.clamp(d / 11f, 0.55f, 1.2f);
+                grenades.add(g);
+                e.cooldown = MathUtils.random(3.2f, 4.4f);
+                emit(Ev.GRENADE_THROW, e.x, e.z, g.x1, g.z1, 0);
+            }
+            return;
+        }
+        e.cooldown -= dt;
+        if (e.cooldown <= 0 && dist < 13.5f && e.stagger <= 0) {
+            e.windup = GRENADE_WINDUP;
+            e.targetX = p.x + MathUtils.random(-0.6f, 0.6f);
+            e.targetZ = p.z + MathUtils.random(-0.6f, 0.6f);
+        }
     }
 
     /**
@@ -391,6 +624,8 @@ public class Battle {
         }
     }
 
+    // ---- projectiles and explosions -----------------------------------------
+
     private void updateBullets(float dt) {
         Soldier p = player;
         for (int i = bullets.size - 1; i >= 0; i--) {
@@ -406,13 +641,13 @@ public class Battle {
                 // Shells go off at the end of their run, on a rock, or on you.
                 float dx = b.x - p.x, dz = b.z - p.z;
                 if (dead || (!p.dodging() && dx * dx + dz * dz < 0.7f * 0.7f)) {
-                    blast(b.x, b.z, b.damage);
+                    blast(b.x, b.z, b.damage, BLAST_RADIUS);
                     bullets.removeIndex(i);
                 }
                 continue;
             }
 
-            if (rock && !b.enemy) emit(Ev.IMPACT, b.x, b.z, -b.vx, -b.vz, 0);
+            if (rock) emit(Ev.IMPACT, b.x, b.z, -b.vx, -b.vz, 0);
 
             if (!dead && b.enemy) {
                 float dx = b.x - p.x, dz = b.z - p.z;
@@ -430,7 +665,7 @@ public class Battle {
                     if (dx * dx + dz * dz < r * r) {
                         float sp = (float) Math.sqrt(b.vx * b.vx + b.vz * b.vz);
                         float nx = b.vx / sp, nz = b.vz / sp;
-                        float dmg = b.damage * (e.tank && p.bazooka ? 3f : 1f);
+                        float dmg = b.damage * (e.isTank() && p.bazooka ? 3f : 1f);
                         damageEnemy(j, dmg, nx, nz);
                         if (b.pierce > 0) { b.pierce--; b.lastHit = e; }
                         else dead = true;
@@ -439,6 +674,34 @@ public class Battle {
                 }
             }
             if (dead) bullets.removeIndex(i);
+        }
+    }
+
+    private void updateGrenades(float dt) {
+        for (int i = grenades.size - 1; i >= 0; i--) {
+            Grenade g = grenades.get(i);
+            g.t += dt;
+            if (g.t >= g.flight) {
+                Hazard h = new Hazard();
+                h.x = g.x1; h.z = g.z1;
+                h.maxFuse = h.fuse = GRENADE_FUSE;
+                h.radius = GRENADE_RADIUS;
+                h.damage = 15;
+                hazards.add(h);
+                emit(Ev.GRENADE_LAND, h.x, h.z, 0, 0, 0);
+                grenades.removeIndex(i);
+            }
+        }
+    }
+
+    private void updateHazards(float dt) {
+        for (int i = hazards.size - 1; i >= 0; i--) {
+            Hazard h = hazards.get(i);
+            h.fuse -= dt;
+            if (h.fuse <= 0) {
+                hazards.removeIndex(i);
+                blast(h.x, h.z, h.damage, h.radius);
+            }
         }
     }
 
@@ -454,7 +717,7 @@ public class Battle {
         Enemy e = enemies.get(index);
         e.hp -= dmg;
         e.hitTimer = 0.1f;
-        if (!e.tank) {
+        if (!e.isTank() && !e.deployed) {
             e.x += nx * 0.3f;
             e.z += nz * 0.3f;
             e.stagger = 0.15f;
@@ -462,30 +725,40 @@ public class Battle {
         if (e.hp <= 0) {
             enemies.removeIndex(index);
             kills++;
-            if (e.tank) emit(Ev.TANK_KILL, e.x, e.z, e.faceX, e.faceZ, 0);
+            if (e.isTank()) emit(Ev.TANK_KILL, e.x, e.z, e.faceX, e.faceZ, 0);
             else emit(Ev.KILL, e.x, e.z, nx, nz, 0);
         } else {
-            emit(e.tank ? Ev.ARMOR_HIT : Ev.HIT, e.x, e.z, nx, nz, dmg);
+            emit(e.isTank() ? Ev.ARMOR_HIT : Ev.HIT, e.x, e.z, nx, nz, dmg);
         }
     }
 
-    /** Shell explosion. Hurts you unless you're rolling, and hurts their own infantry too. */
-    private void blast(float x, float z, float dmg) {
-        emit(Ev.BLAST, x, z, 0, 0, 0);
+    /**
+     * Explosion: shells, grenades and bombs. Hurts you unless you're rolling,
+     * and hurts their own infantry too.
+     */
+    private void blast(float x, float z, float dmg, float radius) {
+        emit(Ev.BLAST, x, z, 0, 0, radius);
         Soldier p = player;
         float dx = p.x - x, dz = p.z - z;
         float d = (float) Math.sqrt(dx * dx + dz * dz);
-        if (d < BLAST_RADIUS && !p.dodging()) hurtPlayer(dmg * (1f - 0.5f * d / BLAST_RADIUS), dx, dz);
+        if (d < radius && !p.dodging()) hurtPlayer(dmg * (1f - 0.5f * d / radius), dx, dz);
         for (int j = enemies.size - 1; j >= 0; j--) {
             Enemy e = enemies.get(j);
-            if (e.tank) continue;
+            if (e.isTank()) continue;
             float ex = e.x - x, ez = e.z - z;
             float ed = (float) Math.sqrt(ex * ex + ez * ez);
-            if (ed < BLAST_RADIUS) {
+            if (ed < radius) {
                 float nx = ed > 0.01f ? ex / ed : 0, nz = ed > 0.01f ? ez / ed : 1;
                 damageEnemy(j, 40, nx, nz);
             }
         }
+    }
+
+    private static float angleDiff(float a, float b) {
+        float d = a - b;
+        while (d > MathUtils.PI) d -= MathUtils.PI2;
+        while (d < -MathUtils.PI) d += MathUtils.PI2;
+        return d;
     }
 
     private boolean hitsRock(float x, float z) {

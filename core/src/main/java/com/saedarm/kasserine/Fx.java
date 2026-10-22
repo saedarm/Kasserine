@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.g3d.Material;
 import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
+import com.badlogic.gdx.graphics.g3d.attributes.BlendingAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.MathUtils;
@@ -55,13 +56,13 @@ public class Fx implements Disposable {
         for (Kind k : Kind.values()) {
             Model m;
             switch (k) {
-                case DUST: m = mb.createBox(1, 1, 1, mat("#b8956a", false), ATTR); break;
-                case SMOKE: m = mb.createBox(1, 1, 1, mat("#4a4440", false), ATTR); break;
+                case DUST: m = mb.createBox(1, 1, 1, see("#b8956a", 0.6f), ATTR); break;
+                case SMOKE: m = mb.createBox(1, 1, 1, see("#4a4440", 0.5f), ATTR); break;
                 case FIRE: m = mb.createBox(1, 1, 1, mat("#ff7a1a", true), ATTR); break;
                 case FLASH: m = mb.createSphere(1, 1, 1, 8, 8, mat("#ffe9a0", true), ATTR); break;
                 case SPARK: m = mb.createBox(1, 1, 1, mat("#fff2b0", true), ATTR); break;
                 case BLOOD: m = mb.createBox(1, 1, 1, mat("#5a1410", false), ATTR); break;
-                default: m = mb.createCylinder(1, 1, 1, 14, mat("#2b2218", false), ATTR); break; // SCORCH
+                default: m = mb.createCylinder(1, 1, 1, 14, see("#2b2218", 0.55f), ATTR); break; // SCORCH
             }
             kindModels[k.ordinal()] = m;
             kindPools.add(new Array<>());
@@ -77,6 +78,11 @@ public class Fx implements Disposable {
         return emissive
                 ? new Material(ColorAttribute.createDiffuse(c), ColorAttribute.createEmissive(c))
                 : new Material(ColorAttribute.createDiffuse(c));
+    }
+
+    /** See-through, so piles of smoke and dust don't hide the fight. */
+    private static Material see(String hex, float opacity) {
+        return new Material(ColorAttribute.createDiffuse(Color.valueOf(hex)), new BlendingAttribute(opacity));
     }
 
     public void clear() {
@@ -146,13 +152,18 @@ public class Fx implements Disposable {
         spray(Kind.SPARK, 2, x, 0.8f, z, dx, dz, 6f, 0.8f, 2f, 0.1f, 0.06f, 0.02f, 10f);
     }
 
-    public void blast(float x, float z) {
-        add(Kind.FLASH, x, 0.8f, z, 0.12f, 3.2f, 1.2f);
-        spray(Kind.FIRE, 16, x, 0.5f, z, 1, 0, 7f, MathUtils.PI, 4f, 0.35f, 0.5f, 0.1f, 4f);
-        spray(Kind.SMOKE, 14, x, 0.6f, z, 1, 0, 2.5f, MathUtils.PI, 2.5f, 1.8f, 0.5f, 1.8f, -0.6f);
-        spray(Kind.DUST, 18, x, 0.2f, z, 1, 0, 8f, MathUtils.PI, 1.5f, 1.0f, 0.4f, 1.1f, 2f);
-        spray(Kind.SPARK, 8, x, 0.6f, z, 1, 0, 10f, MathUtils.PI, 7f, 0.5f, 0.1f, 0.03f, 18f);
-        Particle s = add(Kind.SCORCH, x, 0.01f, z, 25f, 2.6f, 2.6f);
+    public void blast(float x, float z) { blast(x, z, 1f); }
+
+    /** scale 1 = a tank shell. Grenades are a bit smaller, bombs bigger. */
+    public void blast(float x, float z, float scale) {
+        float k = scale;
+        float n = Math.min(1f, k); // bigger blasts spread further but don't spawn more pieces
+        add(Kind.FLASH, x, 0.8f, z, 0.12f, 3.2f * k, 1.2f * k);
+        spray(Kind.FIRE, (int) (16 * n), x, 0.5f, z, 1, 0, 7f * k, MathUtils.PI, 4f, 0.35f, 0.5f * k, 0.1f, 4f);
+        spray(Kind.SMOKE, (int) (10 * n), x, 0.6f, z, 1, 0, 2.5f * k, MathUtils.PI, 2.5f, 1.6f, 0.45f, 1.4f, -0.6f);
+        spray(Kind.DUST, (int) (14 * n), x, 0.2f, z, 1, 0, 8f * k, MathUtils.PI, 1.5f, 1.0f, 0.35f, 0.9f, 2f);
+        spray(Kind.SPARK, (int) (8 * n), x, 0.6f, z, 1, 0, 10f * k, MathUtils.PI, 7f, 0.5f, 0.1f, 0.03f, 18f);
+        Particle s = add(Kind.SCORCH, x, 0.01f, z, 15f, 1.9f * k, 1.9f * k);
         s.y = 0.01f;
     }
 

@@ -15,6 +15,7 @@ public class Sfx implements Disposable {
 
     private static final String[] NAMES = {
         "rifle", "enemy_rifle", "cannon", "blast", "hit", "clank", "dodge", "hurt", "tank_aim", "breakthrough",
+        "mg", "siren", "throw", "clink",
     };
 
     private final ObjectMap<String, Sound> sounds = new ObjectMap<>();

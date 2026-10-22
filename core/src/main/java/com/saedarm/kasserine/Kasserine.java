@@ -17,6 +17,7 @@ import com.badlogic.gdx.graphics.g3d.Material;
 import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
+import com.badlogic.gdx.graphics.g3d.attributes.BlendingAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
@@ -27,6 +28,8 @@ import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.ObjectIntMap;
+import com.badlogic.gdx.utils.ObjectMap;
 
 /**
  * Draws the battle and handles input. Everything is greybox: boxes, cylinders
@@ -69,7 +72,8 @@ public class Kasserine extends ApplicationAdapter {
 
     private final Array<Model> models = new Array<>();
     private Model box, sand, rockModel, gi, giHurt, kraut, krautHit, tankHull, tankTurret, tankHit,
-            tracer, enemyTracer, shell, warn, warnDisc;
+            tracer, enemyTracer, shell, warn, warnDisc,
+            grenadier, stickGrenade, mgBarrel, sandbag, arcLine, planeBody, shadow;
     private Model[] wallModels;
     private final Array<ModelInstance> scenery = new Array<>();
 
@@ -79,6 +83,14 @@ public class Kasserine extends ApplicationAdapter {
             pTracer = new Array<>(), pEnemyTracer = new Array<>(), pShell = new Array<>(), pGun = new Array<>(),
             pWarn = new Array<>(), pWarnDisc = new Array<>();
     private ModelInstance playerInst, playerHurtInst;
+
+    // Reused instances for any model: inst(m) hands out the next one each frame.
+    private final ObjectMap<Model, Array<ModelInstance>> pools = new ObjectMap<>();
+    private final ObjectIntMap<Model> poolUsed = new ObjectIntMap<>();
+
+    // First-time tips ("MG42 team: ...")
+    private String tip;
+    private float tipTimer;
 
     @Override
     public void create() {
@@ -144,7 +156,16 @@ public class Kasserine extends ApplicationAdapter {
         enemyTracer = make(mb.createSphere(0.22f, 0.22f, 0.22f, 6, 6, glow("#ff5a3a"), ATTR));
         shell = make(mb.createSphere(0.45f, 0.45f, 0.45f, 8, 8, glow("#ff8a2a"), ATTR));
         warn = make(mb.createBox(1, 1, 1, glow("#c81e14"), ATTR));
-        warnDisc = make(mb.createCylinder(1, 1, 1, 24, glow("#c81e14"), ATTR));
+        // See-through, so you can still see who's standing in the danger zone.
+        warnDisc = make(mb.createCylinder(1, 1, 1, 28, new Material(ColorAttribute.createDiffuse(Color.valueOf("#d0261a")),
+                ColorAttribute.createEmissive(Color.valueOf("#a01810")), new BlendingAttribute(0.5f)), ATTR));
+        grenadier = make(mb.createCylinder(0.7f, 1.6f, 0.7f, 12, mat("#6b6a50"), ATTR));  // greener, so you can pick him out
+        stickGrenade = make(mb.createCylinder(0.14f, 0.55f, 0.14f, 8, mat("#2f2f2a"), ATTR));
+        mgBarrel = make(mb.createBox(1, 1, 1, mat("#262622"), ATTR));
+        sandbag = make(mb.createBox(1, 1, 1, mat("#b39a6a"), ATTR));
+        arcLine = make(mb.createBox(1, 1, 1, glow("#c0782a"), ATTR));
+        planeBody = make(mb.createBox(1, 1, 1, mat("#5c6166"), ATTR));
+        shadow = make(mb.createCylinder(1, 1, 1, 20, mat("#3a2c1c"), ATTR));
 
         playerInst = new ModelInstance(gi);
         playerHurtInst = new ModelInstance(giHurt);
@@ -189,6 +210,23 @@ public class Kasserine extends ApplicationAdapter {
         return pool.get(i);
     }
 
+    /** The next reusable instance of m for this frame. */
+    private ModelInstance inst(Model m) {
+        Array<ModelInstance> pool = pools.get(m);
+        if (pool == null) { pool = new Array<>(); pools.put(m, pool); }
+        int i = poolUsed.getAndIncrement(m, 0, 1);
+        while (pool.size <= i) pool.add(new ModelInstance(m));
+        return pool.get(i);
+    }
+
+    /** A flat strip on the ground from (x, z) along (dx, dz). */
+    private void groundLine(Model m, float x, float z, float dx, float dz, float start, float len, float width) {
+        ModelInstance line = inst(m);
+        float c = start + len / 2;
+        line.transform.setToTranslation(x + dx * c, 0.035f, z + dz * c).rotate(Vector3.Y, yaw(dx, dz)).scale(width, 0.02f, len);
+        modelBatch.render(line, env);
+    }
+
     /** Degrees to rotate around Y so local +z points along (fx, fz). */
     private static float yaw(float fx, float fz) { return MathUtils.atan2(fx, fz) * MathUtils.radiansToDegrees; }
 
@@ -215,6 +253,7 @@ public class Kasserine extends ApplicationAdapter {
         kickX *= Math.max(0, 1 - dt * 18f);
         kickZ *= Math.max(0, 1 - dt * 18f);
         lineFlash = Math.max(0, lineFlash - dt);
+        if (!paused) tipTimer = Math.max(0, tipTimer - dt);
 
         Battle.Soldier p = battle.player;
         camTarget.lerp(camGoal.set(p.x * 0.6f, 0, p.z + 5f), Math.min(1, dt * 5f));
@@ -307,6 +346,27 @@ public class Kasserine extends ApplicationAdapter {
                     fx.muzzle(e.x, e.z, e.dx, e.dz, 0.7f);
                     sfx.playAt("enemy_rifle", 0.45f, e.x, e.z, p.x, p.z);
                     break;
+                case MG_SHOT:
+                    fx.muzzle(e.x, e.z, e.dx, e.dz, 0.85f);
+                    sfx.playAt("mg", 0.5f, e.x, e.z, p.x, p.z);
+                    break;
+                case MG_SETUP:
+                    sfx.playAt("clank", 0.35f, e.x, e.z, p.x, p.z);
+                    break;
+                case GRENADE_THROW:
+                    sfx.playAt("throw", 0.6f, e.x, e.z, p.x, p.z);
+                    break;
+                case GRENADE_LAND:
+                    fx.impact(e.x, e.z, 0, 1);
+                    sfx.playAt("clink", 0.6f, e.x, e.z, p.x, p.z);
+                    break;
+                case STUKA:
+                    sfx.play("siren", 0.8f, 0, 0);
+                    break;
+                case FIRST_SIGHTING:
+                    String t = TIPS[(int) e.amount];
+                    if (t != null) { tip = t; tipTimer = 5f; }
+                    break;
                 case TANK_AIM:
                     sfx.playAt("tank_aim", 0.8f, e.x, e.z, p.x, p.z);
                     break;
@@ -338,8 +398,8 @@ public class Kasserine extends ApplicationAdapter {
                     fx.impact(e.x, e.z, e.dx, e.dz);
                     break;
                 case BLAST: {
-                    fx.blast(e.x, e.z);
-                    sfx.playAt("blast", 0.9f, e.x, e.z, p.x, p.z);
+                    fx.blast(e.x, e.z, e.amount / Battle.BLAST_RADIUS);
+                    sfx.playAt("blast", 0.9f * Math.min(1f, e.amount / Battle.BLAST_RADIUS), e.x, e.z, p.x, p.z);
                     float dx = e.x - p.x, dz = e.z - p.z;
                     float near = MathUtils.clamp(1f - (float) Math.sqrt(dx * dx + dz * dz) / 14f, 0, 1);
                     shake = Math.max(shake, 0.3f + 0.6f * near);
@@ -362,7 +422,17 @@ public class Kasserine extends ApplicationAdapter {
         }
     }
 
+    /** Shown the first time each threat appears in a run, indexed by Battle.Threat. */
+    private static final String[] TIPS = {
+        null,
+        "GRENADIER: a red circle shows where his grenade will land. Get out of it.",
+        "MG42 TEAM: it can only fire between its two orange lines. Get outside them, or behind a rock.",
+        "PANZER: when the red line appears, roll out of it.",
+        "STUKA! Bombs land on the red circles. Move or roll out.",
+    };
+
     private void drawUnits() {
+        poolUsed.clear();
         Battle.Soldier p = battle.player;
         ModelInstance body = p.hurtTimer > 0 ? playerHurtInst : playerInst;
         if (p.dodging()) {
@@ -385,7 +455,9 @@ public class Kasserine extends ApplicationAdapter {
         int inf = 0, infHit = 0, tanks = 0, tankHits = 0, guns = 1, warns = 0;
         for (Battle.Enemy e : battle.enemies) {
             float a = yaw(e.faceX, e.faceZ);
-            if (e.tank) {
+            if (e.kind == Battle.Threat.MG) {
+                drawMg(e, a);
+            } else if (e.isTank()) {
                 ModelInstance hull = e.hitTimer > 0 ? pooled(pTankHit, tankHit, tankHits++) : pooled(pHull, tankHull, tanks);
                 // Hull points down the canyon, turret tracks you.
                 hull.transform.setToTranslation(e.x, 0.5f, e.z).scale(2.2f, 1f, 2.8f);
@@ -415,6 +487,20 @@ public class Kasserine extends ApplicationAdapter {
                         modelBatch.render(disc, env);
                     }
                 }
+            } else if (e.kind == Battle.Threat.GRENADIER) {
+                ModelInstance i = inst(e.hitTimer > 0 ? krautHit : grenadier);
+                i.transform.setToTranslation(e.x, 0.8f, e.z);
+                modelBatch.render(i, env);
+                // Stick grenade: on his belt, then raised behind his head while he winds up.
+                ModelInstance g = inst(stickGrenade);
+                if (e.windup > 0) {
+                    float k = 1f - e.windup / Battle.GRENADE_WINDUP;
+                    g.transform.setToTranslation(e.x - e.faceX * 0.35f * k, 1.7f + 0.3f * k, e.z - e.faceZ * 0.35f * k)
+                            .rotate(e.faceZ, 0, -e.faceX, -40f * k);
+                } else {
+                    g.transform.setToTranslation(e.x + e.faceZ * 0.38f, 0.75f, e.z - e.faceX * 0.38f);
+                }
+                modelBatch.render(g, env);
             } else {
                 ModelInstance i = e.hitTimer > 0 ? pooled(pInfantryHit, krautHit, infHit++) : pooled(pInfantry, kraut, inf++);
                 i.transform.setToTranslation(e.x, 0.8f, e.z);
@@ -432,6 +518,89 @@ public class Kasserine extends ApplicationAdapter {
                     : b.enemy ? pooled(pEnemyTracer, enemyTracer, et++) : pooled(pTracer, tracer, t++);
             i.transform.setToTranslation(b.x, 1.1f, b.z);
             modelBatch.render(i, env);
+        }
+
+        drawThrownAndFalling();
+    }
+
+    /**
+     * MG42 team. Walking: a soldier carrying the gun. Dug in: a crouched
+     * gunner behind sandbags, and two orange lines on the ground marking
+     * the edges of the arc it can fire into.
+     */
+    private void drawMg(Battle.Enemy e, float yawDeg) {
+        Model body = e.hitTimer > 0 ? krautHit : kraut;
+        if (!e.deployed) {
+            ModelInstance i = inst(body);
+            i.transform.setToTranslation(e.x, 0.8f, e.z);
+            modelBatch.render(i, env);
+            ModelInstance gun = inst(mgBarrel);
+            gun.transform.setToTranslation(e.x + e.faceZ * 0.4f, 1.2f, e.z - e.faceX * 0.4f)
+                    .rotate(Vector3.Y, yawDeg).scale(0.14f, 0.14f, 1.5f);
+            modelBatch.render(gun, env);
+            return;
+        }
+        float fx = MathUtils.cos(e.gun), fz = MathUtils.sin(e.gun);
+        ModelInstance gunner = inst(body);
+        gunner.transform.setToTranslation(e.x, 0.45f, e.z).scale(1.15f, 0.56f, 1.15f);
+        modelBatch.render(gunner, env);
+        ModelInstance gun = inst(mgBarrel);
+        gun.transform.setToTranslation(e.x + fx * 0.85f, 0.8f, e.z + fz * 0.85f)
+                .rotate(Vector3.Y, yaw(fx, fz)).scale(0.13f, 0.13f, 1.5f);
+        modelBatch.render(gun, env);
+        // Sandbags in a short curve facing the middle of the arc.
+        for (int k = -1; k <= 1; k++) {
+            float a = e.arcCenter + k * 0.55f;
+            float sx = e.x + MathUtils.cos(a) * 1.25f, sz = e.z + MathUtils.sin(a) * 1.25f;
+            ModelInstance bag = inst(sandbag);
+            bag.transform.setToTranslation(sx, 0.25f, sz).rotate(Vector3.Y, yaw(MathUtils.cos(a), MathUtils.sin(a))).scale(1.0f, 0.5f, 0.45f);
+            modelBatch.render(bag, env);
+        }
+        // Edges of the field of fire. They blink while the team is still digging in.
+        boolean show = e.windup <= 0 || MathUtils.sin(e.windup * 20f) > 0;
+        if (show) {
+            for (int side = -1; side <= 1; side += 2) {
+                float a = e.arcCenter + side * Battle.MG_ARC;
+                groundLine(arcLine, e.x, e.z, MathUtils.cos(a), MathUtils.sin(a), 1.4f, Battle.MG_RANGE - 4f, 0.09f);
+            }
+        }
+    }
+
+    /** Grenades in the air, red circles where things are about to explode, and Stukas overhead. */
+    private void drawThrownAndFalling() {
+        for (Battle.Grenade g : battle.grenades) {
+            ModelInstance m = inst(stickGrenade);
+            m.transform.setToTranslation(g.x(), g.y(), g.z()).rotate(1, 0, 0, g.t * 900f);
+            modelBatch.render(m, env);
+        }
+        for (Battle.Hazard h : battle.hazards) {
+            // Grows to its full size as it's about to go off, and blinks faster.
+            float k = 1f - h.fuse / h.maxFuse;
+            float left = h.fuse;
+            boolean on = left > 0.6f ? MathUtils.sin(left * 9f) > -0.6f : MathUtils.sin(left * 40f) > -0.2f;
+            if (!on) continue;
+            float r = h.radius * 2f * (0.45f + 0.55f * k);
+            ModelInstance d = inst(warnDisc);
+            d.transform.setToTranslation(h.x, 0.05f, h.z).scale(r, 0.02f, r);
+            modelBatch.render(d, env);
+        }
+        for (Battle.Strike s : battle.strikes) {
+            float off = s.planeOffset();
+            float px = s.cx + s.dx * off, pz = s.cz + s.dz * off;
+            float yawDeg = yaw(s.dx, s.dz);
+            // The shadow sweeps the ground first, so you see it coming.
+            ModelInstance sh = inst(shadow);
+            sh.transform.setToTranslation(px + 1.5f, 0.02f, pz - 1f).rotate(Vector3.Y, yawDeg).scale(5.5f, 0.02f, 2.2f);
+            modelBatch.render(sh, env);
+            ModelInstance body = inst(planeBody);
+            body.transform.setToTranslation(px, 8f, pz).rotate(Vector3.Y, yawDeg).rotate(1, 0, 0, 12f).scale(0.8f, 0.7f, 3.4f);
+            modelBatch.render(body, env);
+            ModelInstance wing = inst(planeBody);
+            wing.transform.setToTranslation(px, 8f, pz).rotate(Vector3.Y, yawDeg).scale(7f, 0.15f, 1.1f);
+            modelBatch.render(wing, env);
+            ModelInstance tail = inst(planeBody);
+            tail.transform.setToTranslation(px - s.dx * 1.6f, 8.2f, pz - s.dz * 1.6f).rotate(Vector3.Y, yawDeg).scale(2.4f, 0.12f, 0.6f);
+            modelBatch.render(tail, env);
         }
     }
 
@@ -502,6 +671,8 @@ public class Kasserine extends ApplicationAdapter {
         text("Kills " + b.kills, 1f, w - pad, h - pad, Align.right, Color.WHITE);
         if (b.state == Battle.State.FIGHTING && b.clock > Battle.DAY_LENGTH - 6 && b.day == 0)
             text(hint(), 0.9f, w / 2, 30 * u, Align.center, Color.WHITE);
+        if (tip != null && tipTimer > 0 && b.state == Battle.State.FIGHTING && !paused)
+            text(tip, 1.05f, w / 2, h * 0.2f, Align.center, Color.GOLD);
 
         if (paused) {
             text("Paused", 2.4f, w / 2, h * 0.6f, Align.center, Color.WHITE);

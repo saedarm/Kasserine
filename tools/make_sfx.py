@@ -101,3 +101,28 @@ save("tank_aim.wav", mix(whine, clack), 0.5)
 a = (np.sin(2 * np.pi * 392 * t(0.18)) + 0.3 * np.sin(2 * np.pi * 784 * t(0.18))) * env(0.18, 0.01, 0.12)
 b = (np.sin(2 * np.pi * 294 * t(0.3)) + 0.3 * np.sin(2 * np.pi * 588 * t(0.3))) * env(0.3, 0.01, 0.2)
 save("breakthrough.wav", np.concatenate([a, b]), 0.5)
+
+# MG42: very short, hard crack. At 12 rounds a second these blur into the tearing sound.
+crack = highpass(noise(0.03), 1200) * env(0.03, 0.0003, 0.006)
+body = lowpass(noise(0.11), 1400) * env(0.11, 0.0005, 0.022)
+thump = np.sin(2 * np.pi * 140 * t(0.07)) * env(0.07, 0.0005, 0.015)
+save("mg.wav", mix(crack, body * 0.9, thump * 0.7), 0.7)
+
+# Stuka siren: a rising wail as it dives, with engine drone underneath.
+sec = 2.6
+k = t(sec) / sec
+f = 380 + 520 * k ** 1.6
+wail = np.sin(2 * np.pi * np.cumsum(f) / RATE) + 0.35 * np.sin(2 * np.pi * np.cumsum(f * 1.5) / RATE)
+drone = lowpass(noise(sec), 160) * 1.5 + 0.4 * np.sin(2 * np.pi * np.cumsum(70 + 40 * k) / RATE)
+shape = np.clip(k / 0.25, 0, 1) * np.clip((1 - k) / 0.12, 0, 1)
+save("siren.wav", (wail * 0.6 + drone) * shape, 0.55)
+
+# Grenade throw: a short swish.
+sec = 0.22
+cut = 600 + 2500 * np.sin(np.pi * t(sec) / sec)
+save("throw.wav", lowpass(noise(sec), cut) * np.sin(np.pi * t(sec) / sec) ** 2, 0.4)
+
+# Grenade landing: a dull clunk on hard ground.
+x = t(0.18)
+save("clink.wav", mix(lowpass(noise(0.18), 1200) * env(0.18, 0.0005, 0.02),
+                      (np.sin(2 * np.pi * 620 * x) + 0.5 * np.sin(2 * np.pi * 1340 * x)) * np.exp(-x / 0.035) * 0.5), 0.5)
