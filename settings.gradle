@@ -1,9 +1,2 @@
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
 rootProject.name = 'kasserine'
-include 'core', 'lwjgl3', 'android'
+include 'core', 'lwjgl3'

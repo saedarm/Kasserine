@@ -1,6 +1,5 @@
 package com.saedarm.kasserine;
 
-import com.badlogic.gdx.Application;
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.InputAdapter;
@@ -41,7 +40,6 @@ public class Kasserine extends ApplicationAdapter {
     private static final long ATTR = Usage.Position | Usage.Normal;
 
     private Battle battle;
-    private Sticks sticks;
     private Controls controls;
     private Fx fx;
     private Sfx sfx;
@@ -84,11 +82,8 @@ public class Kasserine extends ApplicationAdapter {
 
     @Override
     public void create() {
-        Application.ApplicationType type = Gdx.app.getType();
-        boolean touchScreen = type == Application.ApplicationType.Android || type == Application.ApplicationType.iOS;
         battle = new Battle();
-        sticks = new Sticks();
-        controls = new Controls(sticks, touchScreen);
+        controls = new Controls();
         fx = new Fx();
         sfx = new Sfx();
 
@@ -109,14 +104,10 @@ public class Kasserine extends ApplicationAdapter {
         buildModels();
         buildScenery();
 
-        // Order matters: Controls sees everything first (keys, right-click roll),
-        // then taps on menus, then the touch sticks get whatever is left.
-        InputMultiplexer input = new InputMultiplexer(controls, new InputAdapter() {
-            @Override public boolean touchDown(int x, int y, int pointer, int button) { return tap(x, y); }
-        });
-        if (touchScreen) input.addProcessor(sticks);
-        Gdx.input.setInputProcessor(input);
-        Gdx.input.setCatchKey(com.badlogic.gdx.Input.Keys.BACK, true);
+        // Controls sees everything first (keys, right-click roll), then clicks on menus.
+        Gdx.input.setInputProcessor(new InputMultiplexer(controls, new InputAdapter() {
+            @Override public boolean touchDown(int x, int y, int pointer, int button) { return click(x, y); }
+        }));
 
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
@@ -259,13 +250,13 @@ public class Kasserine extends ApplicationAdapter {
         }
     }
 
-    /** Pause, upgrade picks and restarts from keyboard or controller. Taps go through tap(). */
+    /** Pause, upgrade picks and restarts from keyboard or controller. Mouse clicks go through click(). */
     private void menus() {
         Controls c = controls;
         Battle.State st = battle.state;
         if (c.pause && st == Battle.State.FIGHTING) {
             paused = !paused;
-            sticks.clear();
+            controls.clear();
             return;
         }
         if (paused) {
@@ -284,10 +275,9 @@ public class Kasserine extends ApplicationAdapter {
         }
     }
 
-    /** "Tap", "Press A" or "Press Enter", depending on what you're playing with. */
+    /** "Click or press Enter" or "Press A", depending on what you're playing with. */
     private String confirmWord() {
         switch (controls.device) {
-            case TOUCH: return "Tap";
             case CONTROLLER: return "Press A";
             case MOUSE: return "Click or press Enter";
             default: return "Press Enter";
@@ -296,7 +286,6 @@ public class Kasserine extends ApplicationAdapter {
 
     private String hint() {
         switch (controls.device) {
-            case TOUCH: return "Left thumb moves. Right thumb aims and fires. ROLL dodges through bullets.";
             case CONTROLLER: return "Left stick moves. Right stick aims and fires. A rolls through bullets.";
             case MOUSE: return "WASD or arrows move. Mouse aims, click fires. Right-click or Shift rolls.";
             default: return "Arrows or WASD move. Space fires at the nearest enemy. Shift or X rolls.";
@@ -486,28 +475,12 @@ public class Kasserine extends ApplicationAdapter {
         boolean blink = lineFlash > 0 && MathUtils.sin(lineFlash * 30f) > 0;
         bar(pad, h - pad - 70 * u, 110 * u, 8 * u, b.line / 100f, blink ? Color.SCARLET : new Color(0.35f, 0.55f, 0.85f, 1));
 
-        if (controls.showTouch() && b.state == Battle.State.FIGHTING) {
-            for (Sticks.Stick s : new Sticks.Stick[] { sticks.move, sticks.aim }) {
-                if (!s.active()) continue;
-                shapes.setColor(1, 1, 1, 0.15f);
-                shapes.circle(s.originX, s.originY, sticks.radius, 32);
-                shapes.setColor(1, 1, 1, 0.45f);
-                shapes.circle(s.knobX, s.knobY, sticks.radius * 0.4f, 24);
-            }
-            // Dodge button. Fills back up as the cooldown runs out.
-            float ready = 1f - p.dodgeCooldown / Battle.DODGE_COOLDOWN;
-            shapes.setColor(0, 0, 0, 0.35f);
-            shapes.circle(sticks.dodgeX, sticks.dodgeY, sticks.dodgeR, 32);
-            shapes.setColor(1, 1, 1, ready >= 1 ? 0.5f : 0.2f);
-            shapes.circle(sticks.dodgeX, sticks.dodgeY, sticks.dodgeR * ready, 32);
-        }
-
         boolean overlay = b.state != Battle.State.FIGHTING || paused;
         if (overlay) { shapes.setColor(0, 0, 0, 0.6f); shapes.rect(0, 0, w, h); }
         if (b.state == Battle.State.UPGRADE && !paused) {
             for (int i = 0; i < b.offer.size; i++) {
                 Rectangle r = cardRect(i);
-                if (i == selected && !controls.showTouch()) {
+                if (i == selected) {
                     float e = 4 * u;
                     shapes.setColor(Color.GOLD);
                     shapes.rect(r.x - e, r.y - e, r.width + 2 * e, r.height + 2 * e);
@@ -527,8 +500,6 @@ public class Kasserine extends ApplicationAdapter {
         text("Health", 0.8f, pad + 116 * u, h - pad - 40 * u, Align.left, Color.WHITE);
         text("The line", 0.8f, pad + 116 * u, h - pad - 60 * u, Align.left, Color.WHITE);
         text("Kills " + b.kills, 1f, w - pad, h - pad, Align.right, Color.WHITE);
-        if (controls.showTouch() && b.state == Battle.State.FIGHTING && !paused)
-            text("ROLL", 0.8f, sticks.dodgeX, sticks.dodgeY + 5 * u, Align.center, Color.WHITE);
         if (b.state == Battle.State.FIGHTING && b.clock > Battle.DAY_LENGTH - 6 && b.day == 0)
             text(hint(), 0.9f, w / 2, 30 * u, Align.center, Color.WHITE);
 
@@ -538,8 +509,7 @@ public class Kasserine extends ApplicationAdapter {
         } else switch (b.state) {
             case UPGRADE:
                 text("You held. Pick one before " + Battle.DAYS[b.day + 1].split(" - ")[0] + ".", 1.4f, w / 2, h * 0.85f, Align.center, Color.WHITE);
-                if (!controls.showTouch())
-                    text(controls.device == Controls.Device.CONTROLLER ? "Left and right to choose, A to pick" : "Arrows to choose, Enter to pick, or press 1, 2, 3",
+                text(controls.device == Controls.Device.CONTROLLER ? "Left and right to choose, A to pick" : "Arrows to choose, Enter to pick, or press 1, 2, 3",
                             0.9f, w / 2, h * 0.12f, Align.center, Color.LIGHT_GRAY);
                 for (int i = 0; i < b.offer.size; i++) {
                     Rectangle r = cardRect(i);
@@ -571,8 +541,8 @@ public class Kasserine extends ApplicationAdapter {
         text(confirmWord() + " to try again", 1f, w / 2, h * 0.32f, Align.center, Color.GOLD);
     }
 
-    /** Taps on menus and overlays. Returns false during play so the sticks get the touch. */
-    private boolean tap(int sx, int sy) {
+    /** Mouse clicks on menus and overlays. Returns false during play so the click can fire. */
+    private boolean click(int sx, int sy) {
         if (paused) { paused = false; return true; }
         if (battle.state != Battle.State.FIGHTING && menuDelay > 0) return true;
         float y = Gdx.graphics.getHeight() - sy;
@@ -597,7 +567,6 @@ public class Kasserine extends ApplicationAdapter {
         cam.update();
         hudMatrix.setToOrtho2D(0, 0, width, height);
         u = height / 360f;
-        sticks.resize(width, height);
     }
 
     @Override

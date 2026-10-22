@@ -13,9 +13,8 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 
 /**
- * Every way to play, merged into one set of values: touch sticks, keyboard,
- * mouse and game controller. They all work on both desktop and Android, and
- * whichever you used last decides what the HUD shows.
+ * Every way to play, merged into one set of values: keyboard, mouse and game
+ * controller. Whichever you used last decides what the HUD prompts say.
  *
  * Keyboard:   WASD or arrow keys move.
  *             Mouse aims, left click fires, right click rolls.
@@ -28,7 +27,7 @@ import com.badlogic.gdx.math.collision.Ray;
  */
 public class Controls extends InputAdapter {
 
-    public enum Device { TOUCH, KEYBOARD, MOUSE, CONTROLLER }
+    public enum Device { KEYBOARD, MOUSE, CONTROLLER }
 
     private static final float DEADZONE = 0.25f;
     private static final float MOUSE_IDLE = 2.5f; // seconds without mouse use before keyboard aim takes over
@@ -41,13 +40,11 @@ public class Controls extends InputAdapter {
     public boolean pause, confirm, left, right;
     /** 1, 2 or 3 pressed this frame on the upgrade screen, else 0. */
     public int pick;
-    /** What you used last. Starts as touch on phones, mouse on desktop. */
-    public Device device;
+    /** What you used last. */
+    public Device device = Device.MOUSE;
 
     // ---- internals ------------------------------------------------------------
 
-    private final Sticks sticks;
-    private final boolean touchScreen;
     private float mouseIdle = 99f;
     private boolean dodgeKey, pauseKey, confirmKey, leftKey, rightKey;
     private int pickKey;
@@ -57,18 +54,12 @@ public class Controls extends InputAdapter {
     private final Plane ground = new Plane(Vector3.Y, 0);
     private final Vector3 hit = new Vector3();
 
-    public Controls(Sticks sticks, boolean touchScreen) {
-        this.sticks = sticks;
-        this.touchScreen = touchScreen;
-        device = touchScreen ? Device.TOUCH : Device.MOUSE;
-    }
-
     // ---- keyboard and mouse events --------------------------------------------
 
     @Override
     public boolean keyDown(int key) {
         switch (key) {
-            case Input.Keys.ESCAPE: case Input.Keys.BACK: case Input.Keys.P:
+            case Input.Keys.ESCAPE: case Input.Keys.P:
                 pauseKey = true; return true;
             case Input.Keys.SHIFT_LEFT: case Input.Keys.SHIFT_RIGHT: case Input.Keys.X: case Input.Keys.K:
                 dodgeKey = true; markKeyboard(); return true;
@@ -87,13 +78,13 @@ public class Controls extends InputAdapter {
 
     @Override
     public boolean mouseMoved(int x, int y) {
-        if (!touchScreen) { mouseIdle = 0; device = Device.MOUSE; }
+        mouseIdle = 0;
+        device = Device.MOUSE;
         return false;
     }
 
     @Override
     public boolean touchDown(int x, int y, int pointer, int button) {
-        if (touchScreen) { device = Device.TOUCH; return false; }
         mouseIdle = 0;
         device = Device.MOUSE;
         if (button == Input.Buttons.RIGHT) { dodgeKey = true; return true; }
@@ -102,7 +93,7 @@ public class Controls extends InputAdapter {
 
     @Override
     public boolean touchDragged(int x, int y, int pointer) {
-        if (!touchScreen) mouseIdle = 0;
+        mouseIdle = 0;
         return false;
     }
 
@@ -147,12 +138,9 @@ public class Controls extends InputAdapter {
             if (len(lx, ly) > 0 || len(rx, ry) > 0 || padFire || roll || start) device = Device.CONTROLLER;
         }
 
-        // Touch.
-        if (touchScreen && (sticks.move.active() || sticks.aim.active() || sticks.dodgePressed)) device = Device.TOUCH;
-
         // ---- movement: everything adds up, capped at full speed ----
-        float sx = kx + lx + sticks.move.x;
-        float sy = ky + ly + sticks.move.y;
+        float sx = kx + lx;
+        float sy = ky + ly;
         float l = len(sx, sy);
         if (l > 1) { sx /= l; sy /= l; }
         moveX = -sx;
@@ -160,13 +148,10 @@ public class Controls extends InputAdapter {
 
         // ---- aim and fire: the most direct source wins ----
         fire = false;
-        if (sticks.aim.active()) {
-            aimX = -sticks.aim.x; aimZ = sticks.aim.y;
-            fire = true;
-        } else if (len(rx, ry) > 0) {
+        if (len(rx, ry) > 0) {
             aimX = -rx; aimZ = ry;
             fire = len(rx, ry) > 0.5f || padFire;
-        } else if (!touchScreen && mouseIdle < MOUSE_IDLE && device == Device.MOUSE) {
+        } else if (mouseIdle < MOUSE_IDLE && device == Device.MOUSE) {
             Ray ray = cam.getPickRay(in.getX(), in.getY());
             if (Intersector.intersectRayPlane(ray, ground, hit)) { aimX = hit.x - p.x; aimZ = hit.z - p.z; }
             fire = in.isButtonPressed(Input.Buttons.LEFT) || keyFire;
@@ -181,7 +166,7 @@ public class Controls extends InputAdapter {
         }
 
         // ---- one-shot presses ----
-        dodge = dodgeKey || sticks.dodgePressed || (roll && !padRoll);
+        dodge = dodgeKey || (roll && !padRoll);
         pause = pauseKey || (start && !padStart);
         confirm = confirmKey || (ok && !padConfirm);
         left = leftKey || (pl && !padLeft);
@@ -190,15 +175,10 @@ public class Controls extends InputAdapter {
 
         dodgeKey = pauseKey = confirmKey = leftKey = rightKey = false;
         pickKey = 0;
-        sticks.dodgePressed = false;
         padRoll = roll; padStart = start; padConfirm = ok; padLeft = pl; padRight = pr;
     }
 
-    /** True when the on-screen sticks and ROLL button should be drawn. */
-    public boolean showTouch() { return touchScreen && device == Device.TOUCH; }
-
     public void clear() {
-        sticks.clear();
         dodgeKey = pauseKey = confirmKey = leftKey = rightKey = false;
         pickKey = 0;
     }

@@ -1,15 +1,10 @@
-plugins {
-    id 'com.android.application' version '8.13.0' apply false
-}
-
 allprojects {
     repositories {
-        google()
         mavenCentral()
     }
 }
 
-configure(subprojects - project(':android')) {
+subprojects {
     apply plugin: 'java-library'
     java {
         sourceCompatibility = JavaVersion.VERSION_17

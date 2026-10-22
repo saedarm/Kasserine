@@ -1,6 +1,6 @@
 # Kasserine
 
-A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one GI holding the south mouth of a canyon while the Afrika Korps pushes down it. Built with libGDX for Android, with a desktop launcher for testing.
+A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one GI holding the south mouth of a canyon while the Afrika Korps pushes down it. A desktop game built with libGDX for Windows, Mac and Linux.
 
 ## How a run works
 
@@ -13,11 +13,10 @@ A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one 
 
 ## Controls
 
-Every control works on both desktop and Android: plug a keyboard or a Bluetooth controller into the phone and it just works. Whatever you used last decides what the screen shows. The touch sticks and ROLL button disappear when you pick up a controller, and the prompts change from "Tap" to "Press A" or "Press Enter".
+Keyboard, mouse and controller all work, and you can switch at any time. Whatever you used last decides what the on-screen prompts say ("Press Enter" or "Press A").
 
 | | Move | Aim | Fire | Roll | Pause |
 | --- | --- | --- | --- | --- | --- |
-| **Touch** | Left thumb, anywhere on the left half | Right thumb, anywhere on the right half | Fires while your right thumb is down | ROLL button | Back |
 | **Keyboard + mouse** | WASD or arrow keys | Mouse | Left click or Space | Right-click or Shift | Esc or P |
 | **Keyboard only** | Arrow keys or WASD | Automatic: the nearest German, or the way you're moving | Space, Z or J | Shift, X or K | Esc or P |
 | **Controller** | Left stick or D-pad | Right stick | Push the right stick, or hold R1/R2 | A or L1 | Start |
@@ -25,8 +24,8 @@ Every control works on both desktop and Android: plug a keyboard or a Bluetooth 
 Keyboard-only aiming kicks in when the mouse hasn't moved for 2.5 seconds. Arrows + Z to fire + X to roll is the classic arcade layout.
 
 Menus work with any of them:
-- **Upgrade cards:** tap or click a card, or use left/right (arrows, A/D, stick or D-pad) and Enter, Space, Z or A to pick. Number keys 1, 2, 3 pick directly.
-- **Paused or game over:** tap, click, Enter, Space or A.
+- **Upgrade cards:** click a card, or use left/right (arrows, A/D, stick or D-pad) and Enter, Space, Z or A to pick. Number keys 1, 2, 3 pick directly.
+- **Paused or game over:** click, Enter, Space or A.
 - Menu presses are ignored for 0.6 seconds after a screen appears, so holding fire when a day ends doesn't skip the upgrade screen.
 
 The roll lasts 0.28 seconds. Bullets and shells can't hit you during it, and it recharges in 0.9 seconds. You roll the way you're moving, or the way you're aiming if you're standing still. You can't shoot mid-roll.
@@ -35,8 +34,7 @@ The roll lasts 0.28 seconds. Bullets and shells can't hit you during it, and it 
 
 ```
 core/     all game code
-android/  Android launcher and manifest (landscape, immersive)
-lwjgl3/   desktop launcher
+lwjgl3/   desktop launcher and the runnable-jar build
 assets/   sfx/*.wav
 tools/    make_sfx.py, which generates the sound effects
 Play Kasserine.bat   double-click to build and play on Windows
@@ -45,11 +43,10 @@ Play Kasserine.bat   double-click to build and play on Windows
 | File | What it does |
 | --- | --- |
 | `Battle.java` | All the rules as plain Java: the canyon, rocks, player, roll, enemies, tank aiming, bullets, blasts, the clock, the line, upgrades. Draws nothing and plays nothing, so you can simulate runs headless. |
-| `Kasserine.java` | Builds the greybox 3D models, follows the player with the camera, draws units, warning lines and the HUD, handles menus and taps. Turns battle events into effects, sounds, screen shake and freeze frames. |
+| `Kasserine.java` | Builds the greybox 3D models, follows the player with the camera, draws units, warning lines and the HUD, handles menus and clicks. Turns battle events into effects, sounds, screen shake and freeze frames. |
 | `Fx.java` | Visual-only effects: muzzle flashes, dust, blood, sparks, smoke, explosions, scorch marks, soldiers falling over, burning tank wrecks. Cleared at the start of each day. |
 | `Sfx.java` | Loads and plays the sounds, with random pitch, distance falloff and left/right panning. |
-| `Controls.java` | Merges touch, keyboard, mouse and controller into one move/aim/fire/roll value per frame, plus menu presses. Tracks which you used last. |
-| `Sticks.java` | The two touch joysticks and the ROLL button. |
+| `Controls.java` | Merges keyboard, mouse and controller into one move/aim/fire/roll value per frame, plus menu presses. Tracks which you used last. |
 
 ### How effects get from the rules to the screen
 
@@ -72,7 +69,7 @@ Controllers come from the gdx-controllers library (2.2.4), which is the one extr
 
 ## Running on desktop
 
-You need Java 17 or newer. Android Studio ships one, so if Android Studio is installed you already have it.
+You need Java 17 or newer. Android Studio and IntelliJ both ship one, so if either is installed you already have it.
 
 **Easiest: double-click `Play Kasserine.bat`.** The first time, it builds the game (a minute or two), then it starts. After that it starts straight away. It finds Java on its own: `JAVA_HOME` if you've set it, otherwise Android Studio's bundled copy, otherwise whatever `java` is on your PATH. If you change the code, delete `lwjgl3\build\libs\Kasserine-desktop.jar` and it rebuilds next time.
 
@@ -93,7 +90,7 @@ java -jar lwjgl3/build/libs/Kasserine-desktop.jar
 
 The jar has everything inside it, sounds included, and runs on Windows, Mac or Linux, anywhere Java 17+ is installed.
 
-**From Android Studio:** open the Gradle panel on the right, then go to Kasserine → lwjgl3 → Tasks → application → double-click **run**. After that it shows up in the run menu at the top, so you can start it with the green play button.
+**From IntelliJ or Android Studio:** open the folder, let Gradle sync, then open the Gradle panel on the right, then go to Kasserine → lwjgl3 → Tasks → application → double-click **run**. After that it shows up in the run menu at the top, so you can start it with the green play button.
 
 ### If it doesn't start
 
@@ -105,18 +102,6 @@ The jar has everything inside it, sounds included, and runs on Windows, Mac or L
 - **"Unsupported class file major version"** or a Java version error: you have an old Java, 8 or 11. Use Android Studio's copy as above.
 - **The window opens but there's no sound:** the game keeps going without audio if it can't find a sound device. Check your Windows output device.
 
-## Running on Android
-
-Open the folder in Android Studio and let Gradle sync. It builds against API 36.
-
-S23 over USB, with USB debugging on:
-
-```
-gradlew android:installDebug
-```
-
-Or press Run in Android Studio with the phone selected. Without a cable, copy the APK from Releases to the phone and tap it in My Files.
-
 ## Tuning
 
 Most of the feel lives in a few numbers in `Battle.java`:
@@ -127,7 +112,7 @@ Most of the feel lives in a few numbers in `Battle.java`:
 - Enemy health and speed are set in `spawnEnemies()`. Rifle range, fire rate and damage are in `updateRifle()`.
 - Player starting stats are in `reset()`.
 
-In a headless simulation of 300 runs with a bot that aims badly, a bot that never rolls dies on day 2 about a quarter of the time. A bot that rolls out of tank lines always gets past day 2. Both usually die on day 3 or 4, so a real player who dodges well should be able to win. Tune from actual play on the phone.
+In a headless simulation of 300 runs with a bot that aims badly, a bot that never rolls dies on day 2 about a quarter of the time. A bot that rolls out of tank lines always gets past day 2. Both usually die on day 3 or 4, so a real player who dodges well should be able to win. Tune from actual play.
 
 ## Roadmap
 
@@ -140,7 +125,8 @@ Build in this order. Each step should make the game more fun to play before the 
 - [x] Freeze frames, screen shake, camera recoil
 - [x] Tanks show a warning line before firing
 - [x] Placeholder sound for everything
-- [ ] Play it on the S23 and write down what feels wrong
+- [x] Keyboard, mouse and controller support
+- [ ] Play it and write down what feels wrong
 
 ### 2. Enemies that make you play differently
 Each new enemy should make you do something different, not just take more hits.
@@ -165,4 +151,4 @@ Each new enemy should make you do something different, not just take more hits.
 ### 5. Art and polish
 - Low-poly glTF models from Blender via gdx-gltf, plus shadows and animation. Replace the greybox one piece at a time.
 - Real recorded sound.
-- A save system, settings, a main menu, and the Play Store listing.
+- A save system, settings, a main menu, and a page on itch.io or Steam.
