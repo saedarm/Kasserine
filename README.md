@@ -7,7 +7,8 @@ A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one 
 - A run is five days: Sidi Bou Zid, Sbeitla, Kasserine Pass twice, then Thala.
 - Each day is a 60-second clock. Survive until it hits zero.
 - Two ways to lose: you die, or **the line** breaks. Every German who slips past you out the bottom of the canyon knocks the line down (8 for infantry, 25 for a tank). A bugle call and a red flash on the bar tell you it happened.
-- After each day you pick one of three upgrades: Thompson (extra bullet), M1 Garand (damage), Quick Hands (fire rate), Field Dressing (health), Jump Boots (speed), Bazooka Team (triple damage to tanks), AP Rounds (pierce), Air Cover (repairs the line).
+- You start with an M1 Garand and two grenades. Once a day a supply crate comes down by parachute with a different gun in it (see Weapons below).
+- After each day you pick one of three upgrades (see Upgrades below).
 - Each day adds a new threat (see below). The first time each one shows up in a run, a tip at the bottom of the screen tells you how to beat it.
 - Hold all five days and Rommel calls off the attack.
 
@@ -23,15 +24,49 @@ A greybox twin-stick action roguelike set in Tunisia, February 1943. You're one 
 
 Anything with a red circle hurts German infantry as well as you. Rolling makes you immune to all of it.
 
+## Weapons
+
+You carry one gun. Guns reload by themselves when they're empty, or press R to reload early. Upgrades apply to whatever you're holding.
+
+| Gun | Magazine | Feel |
+| --- | --- | --- |
+| **M1 Garand** (start) | 8 | Hits hard, rounds go through one man, long range. The clip pings when it's empty. |
+| **Thompson** | 30 | Very fast, sprays, short range. |
+| **BAR** | 20 | Heavy rounds that go through one man, longest range. Slow reload, and you move 15% slower. |
+| **Trench Gun** | 6 | 8 pellets per shell. Huge damage up close and knocks men back, nothing at range. |
+
+**Supply drops:** once a day, 12-24 seconds in, a crate comes down under a parachute a few steps ahead of you and puts out green smoke. The gun's name floats above it. Walk up to it and press E (Y on a controller) to swap. Your old gun goes into the crate, so you can swap back. Taking a crate also refills your grenades. Crates disappear after 30 seconds.
+
+**Grenades:** press Q or G, or middle-click (B on a controller). With a mouse it lands where you point, up to 12 units away. Without one it goes at the nearest German, or 8 units ahead. A yellow circle marks where it'll go off. Yours never hurt you, kill infantry outright, and do half damage to tanks. You carry 2, and you get one back every 9 seconds. The circles at the bottom right show how many you have and the next one filling up.
+
+## Upgrades
+
+After each day, pick one of three:
+
+| Upgrade | Effect |
+| --- | --- |
+| Double Tap | +1 bullet per shot, fanned out |
+| Marksman | +30% bullet damage |
+| Quick Hands | +25% rate of fire |
+| Stripper Clips | Reload 35% faster |
+| Extra Mags | +50% magazine size, any gun |
+| AP Rounds | Bullets go through one more man |
+| Bazooka Team | Bullets do triple damage to tanks |
+| Grenade Bag | +1 grenade carried, and they come back 25% faster |
+| Heavy Charge | Your grenades blast 40% wider and hit 25% harder |
+| Field Dressing | +25 max health and a full heal |
+| Jump Boots | +15% move speed |
+| Air Cover | The line gets 30 strength back (only offered if it's damaged) |
+
 ## Controls
 
 Keyboard, mouse and controller all work, and you can switch at any time. Whatever you used last decides what the on-screen prompts say ("Press Enter" or "Press A").
 
-| | Move | Aim | Fire | Roll | Pause |
-| --- | --- | --- | --- | --- | --- |
-| **Keyboard + mouse** | WASD or arrow keys | Mouse | Left click or Space | Right-click or Shift | Esc or P |
-| **Keyboard only** | Arrow keys or WASD | Automatic: the nearest German, or the way you're moving | Space, Z or J | Shift, X or K | Esc or P |
-| **Controller** | Left stick or D-pad | Right stick | Push the right stick, or hold R1/R2 | A or L1 | Start |
+| | Move | Aim | Fire | Roll | Grenade | Reload | Take crate | Pause |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Keyboard + mouse** | WASD or arrow keys | Mouse | Left click or Space | Right-click or Shift | Q, G or middle-click | R | E or F | Esc or P |
+| **Keyboard only** | Arrow keys or WASD | Automatic: the nearest German, or the way you're moving | Space, Z or J | Shift, X or K | Q or G | R | E or F | Esc or P |
+| **Controller** | Left stick or D-pad | Right stick | Push the right stick, or hold R1/R2 | A or L1 | B | X | Y | Start |
 
 Keyboard-only aiming kicks in when the mouse hasn't moved for 2.5 seconds. Arrows + Z to fire + X to roll is the classic arcade layout.
 
@@ -58,6 +93,7 @@ Play Kasserine.bat   double-click to build and play on Windows
 | `Kasserine.java` | Builds the greybox 3D models, follows the player with the camera, draws units, MG nests, grenades, red warning circles, Stukas and the HUD, handles menus and clicks. Turns battle events into effects, sounds, tips, screen shake and freeze frames. |
 | `Fx.java` | Visual-only effects: muzzle flashes, dust, blood, sparks, smoke, explosions, scorch marks, soldiers falling over, burning tank wrecks. Cleared at the start of each day. |
 | `Sfx.java` | Loads and plays the sounds, with random pitch, distance falloff and left/right panning. |
+| `Weapon.java` | The four guns and their numbers: magazine, rate of fire, damage, pellets, spread, range, reload, piercing, move speed, knockback. |
 | `Controls.java` | Merges keyboard, mouse and controller into one move/aim/fire/roll value per frame, plus menu presses. Tracks which you used last. |
 
 ### How effects get from the rules to the screen
@@ -125,9 +161,10 @@ Most of the feel lives in a few numbers in `Battle.java`:
 - Which threats show up on which day, and how often, is all in `rollThreat()`.
 - `DAY_LENGTH` and the `spawnTimer` formula in `spawnEnemies()` control how busy each day gets.
 - Enemy health and speed are set in `spawnEnemies()`. Rifle range, fire rate and damage are in `updateRifle()`.
-- Player starting stats are in `reset()`.
+- Player starting stats are in `reset()`. Gun numbers are all in `Weapon.java`.
+- `GRENADES`, `GRENADE_RECHARGE`, `MY_GRENADE_RADIUS`, `MY_GRENADE_DAMAGE`, `THROW_RANGE` for your grenades, and `CRATE_FALL`, `CRATE_LIFE`, `CRATE_REACH` for supply drops. When the crate comes is set in `startDay()`.
 
-In a headless simulation of 400 runs, a bot that aims badly, stands still, and only rolls out of red circles and tank lines dies on day 2 about 40% of the time and on day 3 most of the rest. With the new threats switched off, the same bot dies on day 2 about 26% of the time. Rolling cuts explosion damage from about 45 to under 10 per run, so the warnings work. The bot never flanks MG42s or hides behind rocks, so a real player should do noticeably better. Tune from actual play.
+In a headless simulation, a bot that aims badly, rolls out of red circles and tank lines, steps in when its gun can't reach, and throws grenades whenever it has one, ran 300 runs with each gun. On day 2, the Garand bot died in about 14% of runs, the BAR bot 8%, the Thompson bot 29% and the Trench Gun bot 40%. Most of the rest died on day 3 or 4. The Trench Gun bot dies walking into fire on the way in; a player who rolls in should do much better. Grenades matter: without them, the Garand bot's day-2 deaths double. The bot never flanks MG42s or hides behind rocks, so a real player should do noticeably better. Tune from actual play.
 
 ## Roadmap
 
@@ -154,9 +191,11 @@ Each new enemy should make you do something different, not just take more hits.
 - [ ] Move enemy types into their own classes or a JSON file so `Battle.java` stays readable. It's over 800 lines now, so this is due soon.
 
 ### 3. Build variety
-- Weapons as loot (M1 Garand, Thompson, BAR), each with its own handling.
-- One active ability slot: grenade, smoke, or calling in a mortar strike.
-- Upgrades that combine with each other instead of flat +X% bonuses.
+- [x] Weapons from supply drops: M1 Garand, Thompson, BAR, Trench Gun, each with its own handling
+- [x] Ammo and reloading
+- [x] Grenades on a button, with recharge and upgrades
+- [ ] More throwables or abilities: smoke, or calling in a mortar strike
+- [ ] Upgrades that combine with each other instead of flat +X% bonuses
 
 ### 4. Run structure and meta progression
 - A branching map between fights: battle, supply drop, aid station, event card.

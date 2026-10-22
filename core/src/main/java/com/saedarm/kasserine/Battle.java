@@ -54,16 +54,33 @@ public class Battle {
     public static final float STUKA_PASS = 3f;        // seconds for the plane to cross the screen
     public static final float BOMB_RADIUS = 2.1f;
 
+    // Your grenades
+    public static final int GRENADES = 2;              // carried at the start of a run
+    public static final float GRENADE_RECHARGE = 9f;   // seconds to get one back
+    public static final float MY_GRENADE_RADIUS = 2.2f;
+    public static final float MY_GRENADE_DAMAGE = 60f;
+    public static final float MY_GRENADE_FUSE = 0.45f;
+    public static final float THROW_RANGE = 12f;
+
+    // Supply drops: one crate a day with a different gun in it
+    public static final float CRATE_FALL = 2.5f;       // seconds under the parachute
+    public static final float CRATE_LIFE = 30f;        // seconds on the ground before it's gone
+    public static final float CRATE_REACH = 1.6f;
+
     // ---- upgrades: the lessons the Army learned the hard way ----------------
 
     public enum Upgrade {
-        THOMPSON("Thompson", "+1 bullet per shot, fanned out"),
-        GARAND("M1 Garand", "+30% bullet damage"),
+        DOUBLE_TAP("Double Tap", "+1 bullet per shot, fanned out"),
+        MARKSMAN("Marksman", "+30% bullet damage"),
         QUICK_HANDS("Quick Hands", "+25% rate of fire"),
+        STRIPPER_CLIPS("Stripper Clips", "Reload 35% faster"),
+        EXTRA_MAGS("Extra Mags", "+50% magazine size, any gun"),
         FIELD_DRESSING("Field Dressing", "+25 max health and a full heal"),
         JUMP_BOOTS("Jump Boots", "+15% move speed"),
         BAZOOKA("Bazooka Team", "Bullets do triple damage to tanks"),
         AP_ROUNDS("AP Rounds", "Bullets punch through one more enemy"),
+        GRENADE_BAG("Grenade Bag", "+1 grenade carried, and they come back 25% faster"),
+        HEAVY_CHARGE("Heavy Charge", "Your grenades blast 40% wider and hit 25% harder"),
         AIR_COVER("Air Cover", "The line gets +30 strength back");
 
         public final String title, text;
@@ -73,14 +90,20 @@ public class Battle {
     // ---- events for the renderer --------------------------------------------
 
     public enum Ev {
-        SHOT,          // you fired. x,z = muzzle, dx,dz = aim
+        SHOT,          // you fired. x,z = muzzle, dx,dz = aim, amount = Weapon ordinal
+        RELOAD,        // you started reloading. amount = seconds
+        RELOAD_DONE,   // magazine full again
+        CLIP_PING,     // the Garand's empty clip flew out
+        PICKUP,        // you swapped guns at a crate. amount = new Weapon ordinal
+        CRATE_DROP,    // a supply crate is coming down. x,z = where it will land
+        CRATE_LAND,    // it hit the ground
         ENEMY_SHOT,    // a rifleman fired
         MG_SHOT,       // an MG42 fired one round
         MG_SETUP,      // an MG42 team started digging in
         TANK_AIM,      // a tank started its windup
         TANK_FIRE,     // a tank fired its shell
-        GRENADE_THROW, // a grenadier threw. x,z = from, dx,dz = where it will land
-        GRENADE_LAND,  // a grenade hit the ground and is about to go off
+        GRENADE_THROW, // someone threw. x,z = from, dx,dz = where it will land, amount = 1 if it was you
+        GRENADE_LAND,  // a grenade hit the ground and is about to go off. amount = 1 if yours
         STUKA,         // a bombing run started. x,z = center, dx,dz = flight direction
         HIT,           // your bullet hit infantry. dx,dz = bullet direction
         ARMOR_HIT,     // your bullet hit a tank
@@ -119,13 +142,42 @@ public class Battle {
     public static class Soldier extends Body {
         public float aimX = 0, aimZ = 1, moveX = 0, moveZ = 1;
         public float hp, maxHp = 100, speed = 5f;
-        public float fireRate = 5f, damage = 10f, cooldown;
-        public int pellets = 1, pierce = 0;
-        public boolean bazooka;
         public float hurtTimer;
         public float dodgeTime, dodgeCooldown, dodgeX, dodgeZ;
 
+        // The gun, and what upgrades have done to it.
+        public Weapon weapon = Weapon.GARAND;
+        public int ammo;
+        public float cooldown, reloadTime;
+        public float damageMult = 1, rateMult = 1, reloadMult = 1, clipMult = 1;
+        public int extraPellets, extraPierce;
+        public boolean bazooka;
+
+        // Grenades
+        public int grenades, maxGrenades;
+        public float grenadeTimer, grenadeRecharge, grenadeRadiusMult = 1, grenadeDamageMult = 1;
+
         public boolean dodging() { return dodgeTime > 0; }
+        public boolean reloading() { return reloadTime > 0; }
+        public int clipSize() { return Math.max(1, Math.round(weapon.clip * clipMult)); }
+        public float reloadSeconds() { return weapon.reload * reloadMult; }
+        public float moveSpeed() { return speed * weapon.move; }
+    }
+
+    /** What the player wants to do this frame. Controls fills it in. */
+    public static class Orders {
+        public float moveX, moveZ, aimX, aimZ;
+        public boolean fire, dodge, reload, grenade, interact;
+        /** Set when there's a mouse pointing somewhere on the ground: the grenade goes there. */
+        public boolean hasTarget;
+        public float targetX, targetZ;
+    }
+
+    /** A supply crate. Falls under a parachute, then sits there with a gun in it. */
+    public static class Crate {
+        public float x, z, fall, life;
+        public Weapon weapon;
+        public boolean landed() { return fall <= 0; }
     }
 
     public static class Enemy extends Body {
@@ -144,7 +196,7 @@ public class Battle {
     }
 
     public static class Bullet {
-        public float x, z, vx, vz, life, damage;
+        public float x, z, vx, vz, life, damage, knock;
         public boolean enemy, shell;
         public int pierce;
         public Enemy lastHit;
@@ -153,6 +205,7 @@ public class Battle {
     /** A grenade in the air. t runs from 0 to flight. */
     public static class Grenade {
         public float x0, z0, x1, z1, t, flight;
+        public boolean mine; // thrown by you
         public float x() { return MathUtils.lerp(x0, x1, t / flight); }
         public float z() { return MathUtils.lerp(z0, z1, t / flight); }
         /** Height above the ground, a simple arc. */
@@ -162,7 +215,7 @@ public class Battle {
     /** Something on the ground about to explode: a landed grenade or a falling bomb. */
     public static class Hazard {
         public float x, z, fuse, maxFuse, radius, damage;
-        public boolean bomb;
+        public boolean bomb, mine;
     }
 
     /** A Stuka crossing the canyon. Only for drawing: the bombs are Hazards. */
@@ -189,6 +242,7 @@ public class Battle {
     public final Array<Strike> strikes = new Array<>();
     public final Array<Rock> rocks = new Array<>();
     public final Array<Upgrade> offer = new Array<>();
+    public final Array<Crate> crates = new Array<>();
 
     public State state;
     public int day;          // 0-based
@@ -197,8 +251,12 @@ public class Battle {
     public int kills;
     /** Goes up by one every time a day starts, so the renderer knows to clear old effects. */
     public int dayCounter;
+    /** Goes up by one every new run. */
+    public int runCounter;
 
-    private float spawnTimer, stukaTimer;
+    private float spawnTimer, stukaTimer, crateTimer;
+    private boolean crateDropped;
+    private final Orders noOrders = new Orders();
     private final boolean[] seen = new boolean[Threat.values().length];
 
     public Battle() {
@@ -209,8 +267,13 @@ public class Battle {
     public void reset() {
         Soldier p = player;
         p.x = 0; p.z = 6; p.maxHp = 100; p.hp = 100; p.speed = 5f;
-        p.fireRate = 5f; p.damage = 10f; p.pellets = 1; p.pierce = 0; p.bazooka = false;
+        p.weapon = Weapon.GARAND;
+        p.damageMult = p.rateMult = p.reloadMult = p.clipMult = 1;
+        p.extraPellets = 0; p.extraPierce = 0; p.bazooka = false;
+        p.maxGrenades = GRENADES; p.grenades = GRENADES;
+        p.grenadeRecharge = GRENADE_RECHARGE; p.grenadeRadiusMult = 1; p.grenadeDamageMult = 1;
         day = 0; line = 100; kills = 0;
+        runCounter++;
         java.util.Arrays.fill(seen, false);
         startDay();
     }
@@ -221,12 +284,16 @@ public class Battle {
         grenades.clear();
         hazards.clear();
         strikes.clear();
+        crates.clear();
+        crateDropped = false;
+        crateTimer = MathUtils.random(12f, 24f);
         clock = DAY_LENGTH;
         spawnTimer = 1.5f;
         stukaTimer = MathUtils.random(9f, 14f);
         Soldier p = player;
         p.z = 6; p.x = 0;
         p.dodgeTime = 0; p.dodgeCooldown = 0; p.hurtTimer = 0;
+        p.ammo = p.clipSize(); p.reloadTime = 0; p.cooldown = 0; p.grenadeTimer = 0;
         state = State.FIGHTING;
         dayCounter++;
     }
@@ -255,18 +322,25 @@ public class Battle {
 
     // ---- per-frame update ---------------------------------------------------
 
-    /**
-     * move/aim are -1..1 stick values. fire = trigger held.
-     * dodge = the dodge button was pressed this frame.
-     */
+    /** Shortcut for tests and bots: move, aim, fire and roll, nothing else. */
     public void update(float dt, float moveX, float moveZ, float aimX, float aimZ, boolean fire, boolean dodge) {
+        Orders o = noOrders;
+        o.moveX = moveX; o.moveZ = moveZ; o.aimX = aimX; o.aimZ = aimZ; o.fire = fire; o.dodge = dodge;
+        o.reload = o.grenade = o.interact = o.hasTarget = false;
+        update(dt, o);
+    }
+
+    public void update(float dt, Orders o) {
         events.clear();
         if (state != State.FIGHTING) return;
 
         clock -= dt;
         if (clock <= 0) { endDay(); return; }
 
-        updatePlayer(dt, moveX, moveZ, aimX, aimZ, fire, dodge);
+        updatePlayer(dt, o.moveX, o.moveZ, o.aimX, o.aimZ, o.fire, o.dodge);
+        updateGun(dt, o);
+        updateMyGrenades(dt, o);
+        updateCrates(dt, o);
         spawnEnemies(dt);
         updateStukas(dt);
         updateEnemies(dt);
@@ -307,33 +381,153 @@ public class Battle {
             p.x += p.dodgeX * sp * dt;
             p.z += p.dodgeZ * sp * dt;
         } else {
-            p.x += mx * p.speed * dt;
-            p.z += mz * p.speed * dt;
+            p.x += mx * p.moveSpeed() * dt;
+            p.z += mz * p.moveSpeed() * dt;
         }
         p.z = MathUtils.clamp(p.z, 1f, LENGTH - 2f);
         float hw = halfWidth(p.z) - 0.4f;
         p.x = MathUtils.clamp(p.x, -hw, hw);
         pushOutOfRocks(p, 0.4f);
 
+    }
+
+    // ---- your gun, grenades and supply drops --------------------------------
+
+    private void startReload() {
+        Soldier p = player;
+        if (p.reloading() || p.ammo >= p.clipSize()) return;
+        p.reloadTime = p.reloadSeconds();
+        emit(Ev.RELOAD, p.x, p.z, 0, 0, p.reloadTime);
+    }
+
+    private void updateGun(float dt, Orders o) {
+        Soldier p = player;
+        Weapon w = p.weapon;
         p.cooldown -= dt;
-        if (fire && !p.dodging() && p.cooldown <= 0) {
-            p.cooldown = 1f / p.fireRate;
-            float base = MathUtils.atan2(p.aimZ, p.aimX);
-            float spread = 0.14f;
-            for (int i = 0; i < p.pellets; i++) {
-                float a = base + (i - (p.pellets - 1) / 2f) * spread + MathUtils.random(-0.03f, 0.03f);
-                Bullet b = new Bullet();
-                b.x = p.x + MathUtils.cos(a) * 0.5f;
-                b.z = p.z + MathUtils.sin(a) * 0.5f;
-                b.vx = MathUtils.cos(a) * 26f;
-                b.vz = MathUtils.sin(a) * 26f;
-                b.life = 0.75f;
-                b.damage = p.damage;
-                b.pierce = p.pierce;
-                bullets.add(b);
-            }
-            emit(Ev.SHOT, p.x + p.aimX * 0.9f, p.z + p.aimZ * 0.9f, p.aimX, p.aimZ, 0);
+        if (p.reloading()) {
+            p.reloadTime -= dt;
+            if (p.reloadTime <= 0) { p.reloadTime = 0; p.ammo = p.clipSize(); emit(Ev.RELOAD_DONE, p.x, p.z, 0, 0, 0); }
+            return;
         }
+        if (o.reload) { startReload(); return; }
+        if (!o.fire || p.dodging() || p.cooldown > 0) return;
+        if (p.ammo <= 0) { startReload(); return; }
+
+        p.cooldown = 1f / (w.rate * p.rateMult);
+        float base = MathUtils.atan2(p.aimZ, p.aimX);
+        int n = w.pellets + p.extraPellets;
+        for (int i = 0; i < n; i++) {
+            // Shotgun pellets scatter in a cone. Other guns fan extra bullets out evenly.
+            float a = base + MathUtils.random(-w.spread, w.spread);
+            if (w.pellets == 1 && n > 1) a += (i - (n - 1) / 2f) * 0.14f;
+            Bullet b = new Bullet();
+            b.x = p.x + MathUtils.cos(a) * 0.5f;
+            b.z = p.z + MathUtils.sin(a) * 0.5f;
+            float sp = Weapon.BULLET_SPEED * MathUtils.random(0.92f, 1.05f);
+            b.vx = MathUtils.cos(a) * sp;
+            b.vz = MathUtils.sin(a) * sp;
+            b.life = w.range / Weapon.BULLET_SPEED * (w.pellets > 1 ? MathUtils.random(0.75f, 1f) : 1f);
+            b.damage = w.damage * p.damageMult;
+            b.pierce = w.pierce + p.extraPierce;
+            b.knock = w.knock;
+            bullets.add(b);
+        }
+        p.ammo--;
+        emit(Ev.SHOT, p.x + p.aimX * (0.5f + w.gunLength), p.z + p.aimZ * (0.5f + w.gunLength), p.aimX, p.aimZ, w.ordinal());
+        if (p.ammo == 0) {
+            if (w == Weapon.GARAND) emit(Ev.CLIP_PING, p.x, p.z, 0, 0, 0);
+            startReload();
+        }
+    }
+
+    /**
+     * Your grenades: carry a few, get one back every so often. With a mouse
+     * they go where you point; otherwise at the nearest German in range, or
+     * 8 units the way you're aiming.
+     */
+    private void updateMyGrenades(float dt, Orders o) {
+        Soldier p = player;
+        if (p.grenades < p.maxGrenades) {
+            p.grenadeTimer += dt;
+            if (p.grenadeTimer >= p.grenadeRecharge) { p.grenadeTimer = 0; p.grenades++; }
+        } else p.grenadeTimer = 0;
+
+        if (!o.grenade || p.grenades <= 0 || p.dodging()) return;
+        float tx, tz;
+        if (o.hasTarget) { tx = o.targetX; tz = o.targetZ; }
+        else {
+            Enemy t = null;
+            float best = THROW_RANGE * THROW_RANGE;
+            for (Enemy e : enemies) {
+                float dx = e.x - p.x, dz = e.z - p.z, d = dx * dx + dz * dz;
+                if (d < best) { best = d; t = e; }
+            }
+            if (t != null) { tx = t.x; tz = t.z; }
+            else { tx = p.x + p.aimX * 8f; tz = p.z + p.aimZ * 8f; }
+        }
+        float dx = tx - p.x, dz = tz - p.z, d = (float) Math.sqrt(dx * dx + dz * dz);
+        if (d > THROW_RANGE) { tx = p.x + dx / d * THROW_RANGE; tz = p.z + dz / d * THROW_RANGE; d = THROW_RANGE; }
+
+        Grenade g = new Grenade();
+        g.mine = true;
+        g.x0 = p.x; g.z0 = p.z; g.x1 = tx; g.z1 = tz;
+        g.flight = MathUtils.clamp(d / 13f, 0.35f, 0.95f);
+        grenades.add(g);
+        p.grenades--;
+        emit(Ev.GRENADE_THROW, p.x, p.z, tx, tz, 1);
+    }
+
+    /** One crate a day, partway through, a few steps ahead of you. Press interact next to it to swap guns. */
+    private void updateCrates(float dt, Orders o) {
+        Soldier p = player;
+        if (!crateDropped) {
+            crateTimer -= dt;
+            if (crateTimer <= 0) {
+                crateDropped = true;
+                Crate c = new Crate();
+                c.z = MathUtils.clamp(p.z + MathUtils.random(4f, 8f), 3f, LENGTH - 6f);
+                c.x = MathUtils.random(-1f, 1f) * (halfWidth(c.z) - 2.5f);
+                Body tmp = new Body(); tmp.x = c.x; tmp.z = c.z;
+                pushOutOfRocks(tmp, 1.2f);
+                c.x = tmp.x; c.z = tmp.z;
+                c.fall = CRATE_FALL;
+                c.life = CRATE_LIFE;
+                Weapon[] all = Weapon.values();
+                do c.weapon = all[MathUtils.random(all.length - 1)]; while (c.weapon == p.weapon);
+                crates.add(c);
+                emit(Ev.CRATE_DROP, c.x, c.z, 0, 0, c.weapon.ordinal());
+            }
+        }
+        for (int i = crates.size - 1; i >= 0; i--) {
+            Crate c = crates.get(i);
+            if (!c.landed()) {
+                c.fall -= dt;
+                if (c.landed()) emit(Ev.CRATE_LAND, c.x, c.z, 0, 0, 0);
+                continue;
+            }
+            c.life -= dt;
+            if (c.life <= 0) { crates.removeIndex(i); continue; }
+            if (o.interact && c == crateInReach()) {
+                // Swap: your old gun goes in the crate, so you can change your mind.
+                Weapon old = p.weapon;
+                p.weapon = c.weapon;
+                c.weapon = old;
+                p.ammo = p.clipSize();
+                p.reloadTime = 0;
+                p.grenades = p.maxGrenades;
+                emit(Ev.PICKUP, c.x, c.z, 0, 0, p.weapon.ordinal());
+            }
+        }
+    }
+
+    /** The landed crate you're standing next to, or null. */
+    public Crate crateInReach() {
+        for (Crate c : crates) {
+            if (!c.landed()) continue;
+            float dx = c.x - player.x, dz = c.z - player.z;
+            if (dx * dx + dz * dz < CRATE_REACH * CRATE_REACH) return c;
+        }
+        return null;
     }
 
     // ---- spawning -----------------------------------------------------------
@@ -641,7 +835,7 @@ public class Battle {
                 // Shells go off at the end of their run, on a rock, or on you.
                 float dx = b.x - p.x, dz = b.z - p.z;
                 if (dead || (!p.dodging() && dx * dx + dz * dz < 0.7f * 0.7f)) {
-                    blast(b.x, b.z, b.damage, BLAST_RADIUS);
+                    blast(b.x, b.z, b.damage, BLAST_RADIUS, false);
                     bullets.removeIndex(i);
                 }
                 continue;
@@ -666,7 +860,7 @@ public class Battle {
                         float sp = (float) Math.sqrt(b.vx * b.vx + b.vz * b.vz);
                         float nx = b.vx / sp, nz = b.vz / sp;
                         float dmg = b.damage * (e.isTank() && p.bazooka ? 3f : 1f);
-                        damageEnemy(j, dmg, nx, nz);
+                        damageEnemy(j, dmg, nx, nz, b.knock);
                         if (b.pierce > 0) { b.pierce--; b.lastHit = e; }
                         else dead = true;
                         break;
@@ -684,11 +878,18 @@ public class Battle {
             if (g.t >= g.flight) {
                 Hazard h = new Hazard();
                 h.x = g.x1; h.z = g.z1;
-                h.maxFuse = h.fuse = GRENADE_FUSE;
-                h.radius = GRENADE_RADIUS;
-                h.damage = 15;
+                h.mine = g.mine;
+                if (g.mine) {
+                    h.maxFuse = h.fuse = MY_GRENADE_FUSE;
+                    h.radius = MY_GRENADE_RADIUS * player.grenadeRadiusMult;
+                    h.damage = MY_GRENADE_DAMAGE * player.grenadeDamageMult;
+                } else {
+                    h.maxFuse = h.fuse = GRENADE_FUSE;
+                    h.radius = GRENADE_RADIUS;
+                    h.damage = 15;
+                }
                 hazards.add(h);
-                emit(Ev.GRENADE_LAND, h.x, h.z, 0, 0, 0);
+                emit(Ev.GRENADE_LAND, h.x, h.z, 0, 0, g.mine ? 1 : 0);
                 grenades.removeIndex(i);
             }
         }
@@ -700,7 +901,7 @@ public class Battle {
             h.fuse -= dt;
             if (h.fuse <= 0) {
                 hazards.removeIndex(i);
-                blast(h.x, h.z, h.damage, h.radius);
+                blast(h.x, h.z, h.damage, h.radius, h.mine);
             }
         }
     }
@@ -713,14 +914,14 @@ public class Battle {
     }
 
     /** nx,nz = direction the hit came from, used for knockback and which way they fall. */
-    private void damageEnemy(int index, float dmg, float nx, float nz) {
+    private void damageEnemy(int index, float dmg, float nx, float nz, float knock) {
         Enemy e = enemies.get(index);
         e.hp -= dmg;
         e.hitTimer = 0.1f;
         if (!e.isTank() && !e.deployed) {
-            e.x += nx * 0.3f;
-            e.z += nz * 0.3f;
-            e.stagger = 0.15f;
+            e.x += nx * knock;
+            e.z += nz * knock;
+            e.stagger = 0.15f + knock * 0.2f;
         }
         if (e.hp <= 0) {
             enemies.removeIndex(index);
@@ -733,23 +934,27 @@ public class Battle {
     }
 
     /**
-     * Explosion: shells, grenades and bombs. Hurts you unless you're rolling,
-     * and hurts their own infantry too.
+     * Explosion: shells, grenades and bombs. Theirs hurt you unless you're
+     * rolling, and hurt their own infantry too. Yours (mine = true) never hurt
+     * you, do full damage to infantry and half to tanks.
      */
-    private void blast(float x, float z, float dmg, float radius) {
+    private void blast(float x, float z, float dmg, float radius, boolean mine) {
         emit(Ev.BLAST, x, z, 0, 0, radius);
         Soldier p = player;
-        float dx = p.x - x, dz = p.z - z;
-        float d = (float) Math.sqrt(dx * dx + dz * dz);
-        if (d < radius && !p.dodging()) hurtPlayer(dmg * (1f - 0.5f * d / radius), dx, dz);
+        if (!mine) {
+            float dx = p.x - x, dz = p.z - z;
+            float d = (float) Math.sqrt(dx * dx + dz * dz);
+            if (d < radius && !p.dodging()) hurtPlayer(dmg * (1f - 0.5f * d / radius), dx, dz);
+        }
         for (int j = enemies.size - 1; j >= 0; j--) {
             Enemy e = enemies.get(j);
-            if (e.isTank()) continue;
+            if (e.isTank() && !mine) continue;
             float ex = e.x - x, ez = e.z - z;
             float ed = (float) Math.sqrt(ex * ex + ez * ez);
-            if (ed < radius) {
+            if (ed < radius + e.radius * 0.5f) {
                 float nx = ed > 0.01f ? ex / ed : 0, nz = ed > 0.01f ? ez / ed : 1;
-                damageEnemy(j, 40, nx, nz);
+                float hit = mine ? (e.isTank() ? dmg * 0.5f : dmg) : 40f;
+                damageEnemy(j, hit, nx, nz, 0.6f);
             }
         }
     }
@@ -798,13 +1003,17 @@ public class Battle {
     public void choose(Upgrade u) {
         Soldier p = player;
         switch (u) {
-            case THOMPSON: p.pellets++; break;
-            case GARAND: p.damage *= 1.3f; break;
-            case QUICK_HANDS: p.fireRate *= 1.25f; break;
+            case DOUBLE_TAP: p.extraPellets++; break;
+            case MARKSMAN: p.damageMult *= 1.3f; break;
+            case QUICK_HANDS: p.rateMult *= 1.25f; break;
+            case STRIPPER_CLIPS: p.reloadMult *= 0.65f; break;
+            case EXTRA_MAGS: p.clipMult *= 1.5f; break;
             case FIELD_DRESSING: p.maxHp += 25; p.hp = p.maxHp; break;
             case JUMP_BOOTS: p.speed *= 1.15f; break;
             case BAZOOKA: p.bazooka = true; break;
-            case AP_ROUNDS: p.pierce++; break;
+            case AP_ROUNDS: p.extraPierce++; break;
+            case GRENADE_BAG: p.maxGrenades++; p.grenades++; p.grenadeRecharge *= 0.75f; break;
+            case HEAVY_CHARGE: p.grenadeRadiusMult *= 1.4f; p.grenadeDamageMult *= 1.25f; break;
             case AIR_COVER: line = Math.min(100, line + 30); break;
         }
         day++;

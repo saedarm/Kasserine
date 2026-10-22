@@ -24,7 +24,7 @@ public class Fx implements Disposable {
     private static final int MAX_PARTICLES = 500;
 
     /** Each kind gets its own model so we never change materials per instance. */
-    public enum Kind { DUST, SMOKE, FIRE, FLASH, SPARK, BLOOD, SCORCH }
+    public enum Kind { DUST, SMOKE, FIRE, FLASH, SPARK, BLOOD, SCORCH, MARKER }
 
     private static class Particle {
         Kind kind;
@@ -62,6 +62,7 @@ public class Fx implements Disposable {
                 case FLASH: m = mb.createSphere(1, 1, 1, 8, 8, mat("#ffe9a0", true), ATTR); break;
                 case SPARK: m = mb.createBox(1, 1, 1, mat("#fff2b0", true), ATTR); break;
                 case BLOOD: m = mb.createBox(1, 1, 1, mat("#5a1410", false), ATTR); break;
+                case MARKER: m = mb.createBox(1, 1, 1, see("#58b048", 0.55f), ATTR); break;
                 default: m = mb.createCylinder(1, 1, 1, 14, see("#2b2218", 0.55f), ATTR); break; // SCORCH
             }
             kindModels[k.ordinal()] = m;
@@ -165,6 +166,12 @@ public class Fx implements Disposable {
         spray(Kind.SPARK, (int) (8 * n), x, 0.6f, z, 1, 0, 10f * k, MathUtils.PI, 7f, 0.5f, 0.1f, 0.03f, 18f);
         Particle s = add(Kind.SCORCH, x, 0.01f, z, 15f, 1.9f * k, 1.9f * k);
         s.y = 0.01f;
+    }
+
+    /** Green smoke rising from a supply crate, so you can spot it. */
+    public void marker(float x, float z) {
+        Particle p = add(Kind.MARKER, x + MathUtils.random(-0.15f, 0.15f), 0.4f, z + MathUtils.random(-0.15f, 0.15f), 2.2f, 0.25f, 1.1f);
+        p.vy = 1.8f; p.vx = 0.5f; p.drag = 0.4f;
     }
 
     public void dodgeDust(float x, float z, float dx, float dz) {

@@ -43,6 +43,11 @@ public class Kasserine extends ApplicationAdapter {
     private static final long ATTR = Usage.Position | Usage.Normal;
 
     private Battle battle;
+    private final Battle.Orders orders = new Battle.Orders();
+    private final Vector3 screenPos = new Vector3();
+    private int tipsRun = -1;          // which run the crate tip was last shown in
+    private String banner;             // "Picked up the Thompson" etc.
+    private float bannerTimer;
     private Controls controls;
     private Fx fx;
     private Sfx sfx;
@@ -73,7 +78,8 @@ public class Kasserine extends ApplicationAdapter {
     private final Array<Model> models = new Array<>();
     private Model box, sand, rockModel, gi, giHurt, kraut, krautHit, tankHull, tankTurret, tankHit,
             tracer, enemyTracer, shell, warn, warnDisc,
-            grenadier, stickGrenade, mgBarrel, sandbag, arcLine, planeBody, shadow;
+            grenadier, stickGrenade, mgBarrel, sandbag, arcLine, planeBody, shadow,
+            myDisc, crateModel, chute, chuteLine, gunMetal, gunWood;
     private Model[] wallModels;
     private final Array<ModelInstance> scenery = new Array<>();
 
@@ -166,6 +172,14 @@ public class Kasserine extends ApplicationAdapter {
         arcLine = make(mb.createBox(1, 1, 1, glow("#c0782a"), ATTR));
         planeBody = make(mb.createBox(1, 1, 1, mat("#5c6166"), ATTR));
         shadow = make(mb.createCylinder(1, 1, 1, 20, mat("#3a2c1c"), ATTR));
+        // Your grenades get a yellow circle, so you can tell them apart from theirs.
+        myDisc = make(mb.createCylinder(1, 1, 1, 28, new Material(ColorAttribute.createDiffuse(Color.valueOf("#e0c040")),
+                ColorAttribute.createEmissive(Color.valueOf("#a08a20")), new BlendingAttribute(0.45f)), ATTR));
+        crateModel = make(mb.createBox(1, 1, 1, mat("#55603a"), ATTR));
+        chute = make(mb.createSphere(1, 1, 1, 16, 8, mat("#d8d2bc"), ATTR));
+        chuteLine = make(mb.createBox(1, 1, 1, mat("#8a8470"), ATTR));
+        gunMetal = make(mb.createBox(1, 1, 1, mat("#2c2c2a"), ATTR));
+        gunWood = make(mb.createBox(1, 1, 1, mat("#6b4a2a"), ATTR));
 
         playerInst = new ModelInstance(gi);
         playerHurtInst = new ModelInstance(giHurt);
@@ -254,6 +268,7 @@ public class Kasserine extends ApplicationAdapter {
         kickZ *= Math.max(0, 1 - dt * 18f);
         lineFlash = Math.max(0, lineFlash - dt);
         if (!paused) tipTimer = Math.max(0, tipTimer - dt);
+        if (!paused) bannerTimer = Math.max(0, bannerTimer - dt);
 
         Battle.Soldier p = battle.player;
         camTarget.lerp(camGoal.set(p.x * 0.6f, 0, p.z + 5f), Math.min(1, dt * 5f));
@@ -279,7 +294,8 @@ public class Kasserine extends ApplicationAdapter {
     private void step(float dt) {
         Controls c = controls;
         Battle.State before = battle.state;
-        battle.update(dt, c.moveX, c.moveZ, c.aimX, c.aimZ, c.fire, c.dodge);
+        c.fill(orders);
+        battle.update(dt, orders);
         handleEvents();
         if (battle.player.dodging() && MathUtils.randomBoolean(0.6f)) fx.trail(battle.player.x, battle.player.z);
         if (before == Battle.State.FIGHTING && battle.state != before) {
@@ -323,11 +339,14 @@ public class Kasserine extends ApplicationAdapter {
         }
     }
 
+    /** The key or button for picking up a crate, for prompts. */
+    private String interactKey() { return controls.device == Controls.Device.CONTROLLER ? "Y" : "E"; }
+
     private String hint() {
         switch (controls.device) {
-            case CONTROLLER: return "Left stick moves. Right stick aims and fires. A rolls through bullets.";
-            case MOUSE: return "WASD or arrows move. Mouse aims, click fires. Right-click or Shift rolls.";
-            default: return "Arrows or WASD move. Space fires at the nearest enemy. Shift or X rolls.";
+            case CONTROLLER: return "Left stick moves. Right stick aims and fires. A rolls, B throws a grenade, X reloads.";
+            case MOUSE: return "WASD or arrows move. Mouse aims, click fires. Right-click or Shift rolls. Q throws a grenade, R reloads.";
+            default: return "Arrows or WASD move. Space fires at the nearest enemy. Shift or X rolls. Q throws a grenade, R reloads.";
         }
     }
 
@@ -336,11 +355,40 @@ public class Kasserine extends ApplicationAdapter {
         Battle.Soldier p = battle.player;
         for (Battle.Event e : battle.events) {
             switch (e.type) {
-                case SHOT:
-                    fx.muzzle(e.x, e.z, e.dx, e.dz, 1f);
-                    sfx.play("rifle", 0.55f);
-                    kickX -= e.dx * 0.12f;
-                    kickZ -= e.dz * 0.12f;
+                case SHOT: {
+                    Weapon w = Weapon.values()[(int) e.amount];
+                    float big = w == Weapon.TRENCH_GUN ? 1.5f : w == Weapon.BAR ? 1.15f : w == Weapon.THOMPSON ? 0.8f : 1f;
+                    fx.muzzle(e.x, e.z, e.dx, e.dz, big);
+                    sfx.play(w.sound, w == Weapon.THOMPSON ? 0.45f : 0.55f);
+                    kickX -= e.dx * 0.12f * big;
+                    kickZ -= e.dz * 0.12f * big;
+                    if (w == Weapon.TRENCH_GUN) shake = Math.max(shake, 0.25f);
+                    break;
+                }
+                case RELOAD:
+                    sfx.play("reload", 0.5f);
+                    break;
+                case CLIP_PING:
+                    sfx.play("ping", 0.55f, 0, 0.02f);
+                    break;
+                case PICKUP: {
+                    Weapon w = Weapon.values()[(int) e.amount];
+                    sfx.play("pickup", 0.7f);
+                    banner = "Picked up the " + w.title + ". " + w.blurb;
+                    bannerTimer = 4f;
+                    break;
+                }
+                case CRATE_DROP:
+                    if (tipsRun != battle.runCounter) {
+                        tipsRun = battle.runCounter;
+                        tip = "SUPPLY DROP: walk to the crate under the parachute and press " + interactKey() + " to swap guns.";
+                        tipTimer = 5f;
+                    }
+                    break;
+                case CRATE_LAND:
+                    fx.dodgeDust(e.x, e.z, 0, 1);
+                    fx.dodgeDust(e.x, e.z, 0, -1);
+                    sfx.playAt("thud", 0.7f, e.x, e.z, p.x, p.z);
                     break;
                 case ENEMY_SHOT:
                     fx.muzzle(e.x, e.z, e.dx, e.dz, 0.7f);
@@ -354,7 +402,8 @@ public class Kasserine extends ApplicationAdapter {
                     sfx.playAt("clank", 0.35f, e.x, e.z, p.x, p.z);
                     break;
                 case GRENADE_THROW:
-                    sfx.playAt("throw", 0.6f, e.x, e.z, p.x, p.z);
+                    if (e.amount == 1) sfx.play("throw", 0.7f);
+                    else sfx.playAt("throw", 0.6f, e.x, e.z, p.x, p.z);
                     break;
                 case GRENADE_LAND:
                     fx.impact(e.x, e.z, 0, 1);
@@ -446,10 +495,7 @@ public class Kasserine extends ApplicationAdapter {
         } else {
             body.transform.setToTranslation(p.x, 0.8f, p.z);
             modelBatch.render(body, env);
-            ModelInstance gun = pooled(pGun, box, 0);
-            gun.transform.setToTranslation(p.x + p.aimX * 0.5f, 1.1f, p.z + p.aimZ * 0.5f)
-                    .rotate(Vector3.Y, yaw(p.aimX, p.aimZ)).scale(0.12f, 0.12f, 0.9f);
-            modelBatch.render(gun, env);
+            drawPlayerGun(p);
         }
 
         int inf = 0, infHit = 0, tanks = 0, tankHits = 0, guns = 1, warns = 0;
@@ -521,6 +567,66 @@ public class Kasserine extends ApplicationAdapter {
         }
 
         drawThrownAndFalling();
+        drawCrates();
+    }
+
+    /**
+     * Your gun, so you can tell at a glance what you're holding: a long wooden
+     * rifle, a short chunky Thompson, a long heavy BAR, or a pump shotgun.
+     */
+    private void drawPlayerGun(Battle.Soldier p) {
+        Weapon w = p.weapon;
+        float yawDeg = yaw(p.aimX, p.aimZ);
+        float len = w.gunLength;
+        // During a reload the gun dips down and to the side.
+        float dip = p.reloading() ? MathUtils.sin(MathUtils.PI * (1f - p.reloadTime / p.reloadSeconds())) : 0;
+        float y = 1.1f - 0.25f * dip;
+        float sideX = p.aimZ * 0.25f * dip, sideZ = -p.aimX * 0.25f * dip;
+        float cx = p.x + p.aimX * (0.3f + len / 2) + sideX, cz = p.z + p.aimZ * (0.3f + len / 2) + sideZ;
+
+        ModelInstance stock = inst(w == Weapon.THOMPSON ? gunMetal : gunWood);
+        float thick = w == Weapon.BAR ? 0.17f : w == Weapon.THOMPSON ? 0.16f : 0.13f;
+        stock.transform.setToTranslation(cx, y, cz).rotate(Vector3.Y, yawDeg).scale(thick, thick, len);
+        modelBatch.render(stock, env);
+        ModelInstance barrel = inst(gunMetal);
+        float bl = len * 0.45f;
+        barrel.transform.setToTranslation(p.x + p.aimX * (0.3f + len + bl / 2 - 0.1f) + sideX, y + 0.02f, p.z + p.aimZ * (0.3f + len + bl / 2 - 0.1f) + sideZ)
+                .rotate(Vector3.Y, yawDeg).scale(0.07f, 0.07f, bl);
+        modelBatch.render(barrel, env);
+        if (w == Weapon.THOMPSON || w == Weapon.BAR) {
+            // Magazine: a drum-ish block under the Thompson, a box on top of the BAR's receiver.
+            ModelInstance mag = inst(gunMetal);
+            float mo = w == Weapon.THOMPSON ? 0.45f : 0.55f;
+            mag.transform.setToTranslation(p.x + p.aimX * (0.3f + len * mo) + sideX, y - (w == Weapon.THOMPSON ? 0.17f : 0.13f), p.z + p.aimZ * (0.3f + len * mo) + sideZ)
+                    .rotate(Vector3.Y, yawDeg).scale(0.1f, 0.22f, w == Weapon.THOMPSON ? 0.22f : 0.12f);
+            modelBatch.render(mag, env);
+        }
+    }
+
+    /** Supply crates: falling under a parachute, then sitting on the ground putting out green smoke. */
+    private void drawCrates() {
+        for (Battle.Crate c : battle.crates) {
+            float k = Math.max(0, c.fall) / Battle.CRATE_FALL;
+            float y = 0.35f + 7.5f * k;
+            float sway = MathUtils.sin(c.fall * 2.2f) * 0.6f * k;
+            ModelInstance box = inst(crateModel);
+            box.transform.setToTranslation(c.x + sway, y, c.z).rotate(0, 0, 1, sway * 8f).scale(0.9f, 0.7f, 0.9f);
+            modelBatch.render(box, env);
+            if (!c.landed()) {
+                ModelInstance canopy = inst(chute);
+                canopy.transform.setToTranslation(c.x + sway * 1.4f, y + 2.4f, c.z).scale(2.2f, 0.8f, 2.2f);
+                modelBatch.render(canopy, env);
+                for (int s = 0; s < 4; s++) {
+                    float a = s * MathUtils.PI / 2 + 0.785f;
+                    float ox = MathUtils.cos(a) * 0.9f, oz = MathUtils.sin(a) * 0.9f;
+                    ModelInstance l = inst(chuteLine);
+                    l.transform.setToTranslation(c.x + sway * 1.2f + ox * 0.6f, y + 1.2f, c.z + oz * 0.6f).scale(0.03f, 2.2f, 0.03f);
+                    modelBatch.render(l, env);
+                }
+            } else if (!paused && freeze <= 0 && MathUtils.randomBoolean(0.25f)) {
+                fx.marker(c.x + 0.6f, c.z + 0.3f);
+            }
+        }
     }
 
     /**
@@ -580,7 +686,7 @@ public class Kasserine extends ApplicationAdapter {
             boolean on = left > 0.6f ? MathUtils.sin(left * 9f) > -0.6f : MathUtils.sin(left * 40f) > -0.2f;
             if (!on) continue;
             float r = h.radius * 2f * (0.45f + 0.55f * k);
-            ModelInstance d = inst(warnDisc);
+            ModelInstance d = inst(h.mine ? myDisc : warnDisc);
             d.transform.setToTranslation(h.x, 0.05f, h.z).scale(r, 0.02f, r);
             modelBatch.render(d, env);
         }
@@ -644,6 +750,22 @@ public class Kasserine extends ApplicationAdapter {
         boolean blink = lineFlash > 0 && MathUtils.sin(lineFlash * 30f) > 0;
         bar(pad, h - pad - 70 * u, 110 * u, 8 * u, b.line / 100f, blink ? Color.SCARLET : new Color(0.35f, 0.55f, 0.85f, 1));
 
+        // Ammo and grenades, bottom right. Bars show reload and grenade recharge progress.
+        if (b.state == Battle.State.FIGHTING) {
+            float bx = w - pad - 150 * u;
+            if (p.reloading()) bar(bx, pad + 34 * u, 150 * u, 5 * u, 1f - p.reloadTime / p.reloadSeconds(), Color.GOLD);
+            for (int i = 0; i < p.maxGrenades; i++) {
+                float gx = w - pad - 8 * u - i * 18 * u, gy = pad + 10 * u;
+                boolean have = i < p.grenades;
+                shapes.setColor(have ? new Color(0.45f, 0.5f, 0.28f, 1) : new Color(0, 0, 0, 0.45f));
+                shapes.circle(gx, gy, 6 * u, 16);
+                if (i == p.grenades && p.grenades < p.maxGrenades) {
+                    shapes.setColor(0.45f, 0.5f, 0.28f, 0.6f);
+                    shapes.circle(gx, gy, 6 * u * p.grenadeTimer / p.grenadeRecharge, 16);
+                }
+            }
+        }
+
         boolean overlay = b.state != Battle.State.FIGHTING || paused;
         if (overlay) { shapes.setColor(0, 0, 0, 0.6f); shapes.rect(0, 0, w, h); }
         if (b.state == Battle.State.UPGRADE && !paused) {
@@ -669,10 +791,29 @@ public class Kasserine extends ApplicationAdapter {
         text("Health", 0.8f, pad + 116 * u, h - pad - 40 * u, Align.left, Color.WHITE);
         text("The line", 0.8f, pad + 116 * u, h - pad - 60 * u, Align.left, Color.WHITE);
         text("Kills " + b.kills, 1f, w - pad, h - pad, Align.right, Color.WHITE);
+        if (b.state == Battle.State.FIGHTING) {
+            String ammo = p.reloading() ? "Reloading..." : p.ammo + " / " + p.clipSize();
+            text(p.weapon.title + "   " + ammo, 1.05f, w - pad, pad + 52 * u, Align.right,
+                    p.reloading() ? Color.GOLD : p.ammo == 0 ? Color.SCARLET : Color.WHITE);
+            text("Grenades", 0.8f, w - pad - 8 * u - p.maxGrenades * 18 * u, pad + 15 * u, Align.right, Color.LIGHT_GRAY);
+
+            // Crates: the gun's name floats above each one, and a prompt when you're close enough.
+            for (Battle.Crate c : b.crates) {
+                if (!c.landed()) continue;
+                cam.project(screenPos.set(c.x, 1.6f, c.z));
+                text(c.weapon.title, 0.9f, screenPos.x, screenPos.y + 14 * u, Align.center, Color.WHITE);
+            }
+            Battle.Crate near = b.crateInReach();
+            if (near != null && !paused)
+                text(interactKey() + ": swap your " + p.weapon.title + " for the " + near.weapon.title, 1.1f, w / 2, h * 0.22f, Align.center, Color.WHITE);
+            if (banner != null && bannerTimer > 0 && !paused)
+                text(banner, 0.9f, w / 2, h - pad - (tip != null && tipTimer > 0 ? 104 : 86) * u, Align.center, Color.WHITE);
+        }
         if (b.state == Battle.State.FIGHTING && b.clock > Battle.DAY_LENGTH - 6 && b.day == 0)
             text(hint(), 0.9f, w / 2, 30 * u, Align.center, Color.WHITE);
+        // Tips and pick-up messages go under the clock, out of the way of the fight and the ammo readout.
         if (tip != null && tipTimer > 0 && b.state == Battle.State.FIGHTING && !paused)
-            text(tip, 1.05f, w / 2, h * 0.2f, Align.center, Color.GOLD);
+            text(tip, 0.95f, w / 2, h - pad - 86 * u, Align.center, Color.GOLD);
 
         if (paused) {
             text("Paused", 2.4f, w / 2, h * 0.6f, Align.center, Color.WHITE);

@@ -126,3 +126,40 @@ save("throw.wav", lowpass(noise(sec), cut) * np.sin(np.pi * t(sec) / sec) ** 2, 
 x = t(0.18)
 save("clink.wav", mix(lowpass(noise(0.18), 1200) * env(0.18, 0.0005, 0.02),
                       (np.sin(2 * np.pi * 620 * x) + 0.5 * np.sin(2 * np.pi * 1340 * x)) * np.exp(-x / 0.035) * 0.5), 0.5)
+
+# Thompson: lighter, snappier than the rifle (.45 ACP, short barrel).
+crack = highpass(noise(0.03), 1800) * env(0.03, 0.0003, 0.005)
+body = lowpass(noise(0.14), 2200) * env(0.14, 0.0005, 0.025)
+thump = np.sin(2 * np.pi * 170 * t(0.08)) * env(0.08, 0.0005, 0.018)
+save("smg.wav", mix(crack, body, thump * 0.6), 0.7)
+
+# BAR: heavier than the rifle, with a deeper boom.
+save("bar.wav", mix(gunshot(0.0), np.sin(2 * np.pi * 75 * t(0.25)) * env(0.25, 0.001, 0.06) * 0.9), 0.9)
+
+# Trench gun: big low boom and a long tail.
+boomy = lowpass(noise(0.5), 900) * env(0.5, 0.001, 0.09)
+low = sweep(120, 45, 0.4) * env(0.4, 0.001, 0.08)
+save("shotgun.wav", mix(boomy * 1.6, low * 1.2, highpass(noise(0.04), 1500) * env(0.04, 0.0003, 0.008)), 0.95)
+
+# The Garand ping: the empty en-bloc clip flying out. A bright ringing metal note.
+x = t(0.45)
+ping = sum(a * np.sin(2 * np.pi * f * x) * np.exp(-x / d) for f, a, d in [(2650, 1.0, 0.16), (3980, 0.5, 0.09), (5300, 0.25, 0.05), (1325, 0.2, 0.12)])
+save("ping.wav", mix(ping, highpass(noise(0.01), 3000) * env(0.01, 0.0002, 0.002) * 0.6), 0.6)
+
+def click(f0, dur, gain):
+    return (highpass(noise(dur), f0) * env(dur, 0.0003, dur / 5) * gain)
+
+# Reload: magazine out, magazine in, bolt.
+r = np.zeros(int(RATE * 0.55))
+for at, c in [(0.0, click(1500, 0.05, 0.7)), (0.22, click(900, 0.06, 1.0)), (0.40, click(2000, 0.08, 1.0))]:
+    i = int(RATE * at); r[i:i + len(c)] += c
+save("reload.wav", r, 0.5)
+
+# Pick up a gun: a two-part rack.
+r = np.zeros(int(RATE * 0.35))
+for at, c in [(0.0, click(1200, 0.07, 1.0)), (0.16, click(1800, 0.09, 1.0))]:
+    i = int(RATE * at); r[i:i + len(c)] += c
+save("pickup.wav", r, 0.55)
+
+# Crate landing on sand: a soft wooden thud.
+save("thud.wav", mix(lowpass(noise(0.3), 300) * env(0.3, 0.002, 0.06) * 2, np.sin(2 * np.pi * 95 * t(0.2)) * env(0.2, 0.002, 0.05)), 0.6)

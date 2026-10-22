@@ -17,10 +17,11 @@ import com.badlogic.gdx.math.collision.Ray;
  * controller. Whichever you used last decides what the HUD prompts say.
  *
  * Keyboard:   WASD or arrow keys move.
- *             Mouse aims, left click fires, right click rolls.
+ *             Mouse aims, left click fires, right click rolls, middle click throws a grenade.
  *             No mouse? Space, Z or J fires at the nearest enemy; Shift, X or K rolls.
+ *             Q or G throws a grenade, R reloads, E or F takes a supply crate.
  * Controller: left stick moves, right stick aims and fires (or hold R1/R2),
- *             A or L1 rolls, Start pauses.
+ *             A or L1 rolls, B throws a grenade, X reloads, Y takes a crate, Start pauses.
  *
  * All directions come out in world space (x across the canyon, z up it).
  * Screen right is world -x with this camera, hence the minus signs.
@@ -35,7 +36,10 @@ public class Controls extends InputAdapter {
     // ---- results of poll() -----------------------------------------------------
 
     public float moveX, moveZ, aimX, aimZ;
-    public boolean fire, dodge;
+    public boolean fire, dodge, reload, grenade, interact;
+    /** Where the mouse points on the ground, when there's a mouse in use. */
+    public boolean hasTarget;
+    public float targetX, targetZ;
     /** One-shot menu presses, true only for the frame they happened. */
     public boolean pause, confirm, left, right;
     /** 1, 2 or 3 pressed this frame on the upgrade screen, else 0. */
@@ -46,10 +50,10 @@ public class Controls extends InputAdapter {
     // ---- internals ------------------------------------------------------------
 
     private float mouseIdle = 99f;
-    private boolean dodgeKey, pauseKey, confirmKey, leftKey, rightKey;
+    private boolean dodgeKey, pauseKey, confirmKey, leftKey, rightKey, reloadKey, grenadeKey, interactKey;
     private int pickKey;
     // Controller buttons last frame, so we only react to the press, not the hold.
-    private boolean padRoll, padStart, padConfirm, padLeft, padRight;
+    private boolean padRoll, padStart, padConfirm, padLeft, padRight, padReload, padGrenade, padInteract;
 
     private final Plane ground = new Plane(Vector3.Y, 0);
     private final Vector3 hit = new Vector3();
@@ -69,6 +73,9 @@ public class Controls extends InputAdapter {
                 leftKey = true; return false;
             case Input.Keys.RIGHT: case Input.Keys.D:
                 rightKey = true; return false;
+            case Input.Keys.R: reloadKey = true; return true;
+            case Input.Keys.Q: case Input.Keys.G: grenadeKey = true; markKeyboard(); return true;
+            case Input.Keys.E: case Input.Keys.F: interactKey = true; return true;
             case Input.Keys.NUM_1: case Input.Keys.NUMPAD_1: pickKey = 1; return true;
             case Input.Keys.NUM_2: case Input.Keys.NUMPAD_2: pickKey = 2; return true;
             case Input.Keys.NUM_3: case Input.Keys.NUMPAD_3: pickKey = 3; return true;
@@ -88,6 +95,7 @@ public class Controls extends InputAdapter {
         mouseIdle = 0;
         device = Device.MOUSE;
         if (button == Input.Buttons.RIGHT) { dodgeKey = true; return true; }
+        if (button == Input.Buttons.MIDDLE) { grenadeKey = true; return true; }
         return false;
     }
 
@@ -120,6 +128,7 @@ public class Controls extends InputAdapter {
         // Controller.
         float lx = 0, ly = 0, rx = 0, ry = 0;
         boolean padFire = false, roll = false, start = false, ok = false, pl = false, pr = false;
+        boolean prl = false, pgr = false, pin = false;
         Controller c = controller();
         if (c != null) {
             ControllerMapping m = c.getMapping();
@@ -133,9 +142,12 @@ public class Controls extends InputAdapter {
             roll = button(c, m.buttonA) || button(c, m.buttonL1);
             start = button(c, m.buttonStart) || button(c, m.buttonBack);
             ok = button(c, m.buttonA);
+            pgr = button(c, m.buttonB);
+            prl = button(c, m.buttonX);
+            pin = button(c, m.buttonY);
             pl = lx < -0.6f;
             pr = lx > 0.6f;
-            if (len(lx, ly) > 0 || len(rx, ry) > 0 || padFire || roll || start) device = Device.CONTROLLER;
+            if (len(lx, ly) > 0 || len(rx, ry) > 0 || padFire || roll || start || pgr || prl || pin) device = Device.CONTROLLER;
         }
 
         // ---- movement: everything adds up, capped at full speed ----
@@ -148,12 +160,16 @@ public class Controls extends InputAdapter {
 
         // ---- aim and fire: the most direct source wins ----
         fire = false;
+        hasTarget = false;
         if (len(rx, ry) > 0) {
             aimX = -rx; aimZ = ry;
             fire = len(rx, ry) > 0.5f || padFire;
         } else if (mouseIdle < MOUSE_IDLE && device == Device.MOUSE) {
             Ray ray = cam.getPickRay(in.getX(), in.getY());
-            if (Intersector.intersectRayPlane(ray, ground, hit)) { aimX = hit.x - p.x; aimZ = hit.z - p.z; }
+            if (Intersector.intersectRayPlane(ray, ground, hit)) {
+                aimX = hit.x - p.x; aimZ = hit.z - p.z;
+                hasTarget = true; targetX = hit.x; targetZ = hit.z;
+            }
             fire = in.isButtonPressed(Input.Buttons.LEFT) || keyFire;
         } else {
             // Keyboard only, or a controller without the right stick touched:
@@ -167,19 +183,30 @@ public class Controls extends InputAdapter {
 
         // ---- one-shot presses ----
         dodge = dodgeKey || (roll && !padRoll);
+        reload = reloadKey || (prl && !padReload);
+        grenade = grenadeKey || (pgr && !padGrenade);
+        interact = interactKey || (pin && !padInteract);
         pause = pauseKey || (start && !padStart);
         confirm = confirmKey || (ok && !padConfirm);
         left = leftKey || (pl && !padLeft);
         right = rightKey || (pr && !padRight);
         pick = pickKey;
 
-        dodgeKey = pauseKey = confirmKey = leftKey = rightKey = false;
+        dodgeKey = pauseKey = confirmKey = leftKey = rightKey = reloadKey = grenadeKey = interactKey = false;
         pickKey = 0;
+        padReload = prl; padGrenade = pgr; padInteract = pin;
         padRoll = roll; padStart = start; padConfirm = ok; padLeft = pl; padRight = pr;
     }
 
+    /** Copies this frame's input into the Battle's orders. */
+    public void fill(Battle.Orders o) {
+        o.moveX = moveX; o.moveZ = moveZ; o.aimX = aimX; o.aimZ = aimZ;
+        o.fire = fire; o.dodge = dodge; o.reload = reload; o.grenade = grenade; o.interact = interact;
+        o.hasTarget = hasTarget; o.targetX = targetX; o.targetZ = targetZ;
+    }
+
     public void clear() {
-        dodgeKey = pauseKey = confirmKey = leftKey = rightKey = false;
+        dodgeKey = pauseKey = confirmKey = leftKey = rightKey = reloadKey = grenadeKey = interactKey = false;
         pickKey = 0;
     }
 
